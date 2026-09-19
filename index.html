@@ -205,6 +205,7 @@ function defaultState(){
     peso:{ historico:[] },
     gastosFixos:{ itens:[], seeded:false },
     estudos:{ topicos:[] },
+    questoesDiario:{},
     appStartDate:null,
     weeklySummaryLastShownWeek:null,
     lastEvaluatedDate:null
@@ -223,6 +224,7 @@ function load(){
       peso: Object.assign(base.peso, parsed.peso||{}),
       gastosFixos: Object.assign(base.gastosFixos, parsed.gastosFixos||{}),
       estudos: Object.assign(base.estudos, parsed.estudos||{}),
+      questoesDiario: parsed.questoesDiario||{},
       days: parsed.days||{},
       weekends: parsed.weekends||{}
     });
@@ -260,6 +262,7 @@ const REF_KEYS = ['ref1','ref2','ref3'];
 const REF_LABELS = { ref1:'Café da manhã', ref2:'Almoço', ref3:'Jantar' };
 const REF_TIMES = { ref1:'08:00', ref2:'12:00', ref3:'18:00' };
 const AGUA_META = 2800;
+const QUESTOES_META = 30;
 const INSCRICAO_VALOR = 85;
 
 const TREINO_EXERCICIOS = [
@@ -385,6 +388,8 @@ function getCoachDirectives(){
   const directives = [];
   const check = (time, done, msg) => { if(hm>=time && !done) directives.push(msg); };
 
+  check('21:00', getQuestoesHoje(today)>=QUESTOES_META, `${NOME_USUARIA}, você precisa responder as ${QUESTOES_META} questões do dia.`);
+
   if(isWeekday(today)){
     const day = ensureWeekdayDay(today);
     const aguaPct = Math.min(100, Math.round((day.agua.ml/AGUA_META)*100));
@@ -474,6 +479,34 @@ function toggleTreino(dateStr, status){
     toast(10,'VOCÊ NÃO PODE pular treino. Isso não é sobre disposição, é sobre compromisso com o esporte.');
   } else { setTag(tag,0,'',dateStr); }
   save(); render();
+}
+function getQuestoesHoje(dateStr){ return state.questoesDiario[dateStr] || 0; }
+function addQuestoes(dateStr, qtd){
+  state.questoesDiario[dateStr] = Math.max(0, getQuestoesHoje(dateStr) + qtd);
+  save(); render();
+}
+function finalizarQuestoesDoDia(dateStr){
+  const qtd = getQuestoesHoje(dateStr);
+  const tag = `${dateStr}:questoes`;
+  if(qtd < QUESTOES_META){
+    setTag(tag, 10, `Menos de ${QUESTOES_META} questões respondidas no dia (${qtd}/${QUESTOES_META})`, dateStr, 'caixinha', 'questoes');
+  } else {
+    setTag(tag, 0, '', dateStr);
+  }
+}
+function renderQuestoesCard(dateStr){
+  const qtd = getQuestoesHoje(dateStr);
+  const pct = Math.min(100, Math.round((qtd/QUESTOES_META)*100));
+  return `<div class="card">
+    <div class="section-title">📝 Questões do dia — meta ${QUESTOES_META}</div>
+    <div class="row-between"><span>${qtd} questões</span><span>${pct}%</span></div>
+    <div class="progress"><div class="progress-fill ${pct>=100?'good':''}" style="width:${pct}%"></div></div>
+    <div class="btn-ghost-row" style="margin-top:12px;">
+      <button class="btn" data-action="questoes-add" data-date="${dateStr}" data-qtd="10">+10</button>
+      <button class="btn" data-action="questoes-add" data-date="${dateStr}" data-qtd="20">+20</button>
+      <button class="btn btn-secondary" data-action="questoes-add" data-date="${dateStr}" data-qtd="-10">-10</button>
+    </div>
+  </div>`;
 }
 function toggleTreinoUnified(dateStr, status){
   if(isWeekday(dateStr)){ toggleTreino(dateStr, status); return; }
@@ -618,11 +651,13 @@ function evaluateOnLoad(){
   while(cursor < today && guard < 3650){
     if(isWeekday(cursor)) finalizeDay(cursor);
     if(dayOfWeek(cursor)===0) finalizeWeekend(saturdayKeyFor(cursor));
+    finalizarQuestoesDoDia(cursor);
     cursor = addDays(cursor,1); guard++;
   }
   const hm = nowHM();
   if(isWeekday(today) && hm>='22:00') finalizeDay(today);
   if(dayOfWeek(today)===0 && hm>='21:00') finalizeWeekend(saturdayKeyFor(today));
+  if(hm>='22:00') finalizarQuestoesDoDia(today);
   state.lastEvaluatedDate = addDays(today,-1);
   save();
 }
@@ -890,15 +925,22 @@ function computeWeekStats(startStr, endStr){
     const vals = Object.values(items);
     preparoPct = (vals.filter(Boolean).length / vals.length) * 100;
   }
+  let questoesOk=0, questoesTot=0;
+  cursor = startStr;
+  while(cursor <= endStr){
+    questoesTot++; if(getQuestoesHoje(cursor)>=QUESTOES_META) questoesOk++;
+    cursor = addDays(cursor,1);
+  }
   const totalMultas = state.financas.gastos.filter(g=>g.categoria==='caixinha' && g.data>=startStr && g.data<=endStr).reduce((s,g)=>s+g.valor,0);
   const pct = (ok,tot)=> tot>0 ? (ok/tot)*100 : null;
-  const parts = [pct(treinoOk,treinoTot), pct(estudoOk,estudoTot), pct(refOk,refTot), pct(trabOk,trabTot), preparoPct].filter(v=>v!==null);
+  const parts = [pct(treinoOk,treinoTot), pct(estudoOk,estudoTot), pct(refOk,refTot), pct(trabOk,trabTot), preparoPct, pct(questoesOk,questoesTot)].filter(v=>v!==null);
   const overallPct = parts.length ? parts.reduce((a,b)=>a+b,0)/parts.length : 100;
   return {
     treinoPct: pct(treinoOk,treinoTot) ?? 0,
     estudoPct: pct(estudoOk,estudoTot) ?? 0,
     alimentacaoPct: pct(refOk,refTot) ?? 0,
     trabalhoPct: pct(trabOk,trabTot) ?? 0,
+    questoesPct: pct(questoesOk,questoesTot) ?? 0,
     preparoPct, overallPct, totalMultas
   };
 }
@@ -1031,6 +1073,7 @@ function openWeeklySummaryModal(stats, titulo){
     ${barRow('Estudo', stats.estudoPct)}
     ${barRow('Alimentação', stats.alimentacaoPct)}
     ${barRow('Trabalho pontual', stats.trabalhoPct)}
+    ${barRow('Questões (30/dia)', stats.questoesPct)}
     ${stats.preparoPct!==null ? barRow('Preparo de fim de semana', stats.preparoPct) : ''}
     <p class="modal-total"><span>Total de multas na semana</span><strong>${brl(stats.totalMultas)}</strong></p>
     <p class="pill ${tier.cls}" style="white-space:normal;font-size:12.5px;padding:10px 12px;line-height:1.4;">${tier.msg}</p>
@@ -1104,6 +1147,7 @@ function renderHoje(){
     ${streak>0?`<div class="badge-streak" style="margin-top:10px;">🔥 ${streak} dia${streak>1?'s':''} sem multa</div>`:''}
     ${isModoConcurso(today)?'<div class="badge-fire" style="margin-top:10px;">🔥 Modo concurso — VOCÊ NÃO PODE pular estudo agora. Custa R$20.</div>':''}</div>`;
   html += renderCoachBanner();
+  html += renderQuestoesCard(today);
 
   if(wd || isSat){
     const treinoStatus = wd ? ensureWeekdayDay(today).items.treino : ensureWeekend(today).treino;
@@ -1441,6 +1485,7 @@ document.addEventListener('click', (e)=>{
     case 'treino-tipo': setTreinoTipo(a.date, a.tipo); break;
     case 'ref-status': toggleRefeicao(todayStr(), a.key, a.status); break;
     case 'agua-add': addAgua(todayStr(), Number(a.ml)); break;
+    case 'questoes-add': addQuestoes(a.date, Number(a.qtd)); break;
     case 'trabalho-registrar': registrarTrabalho(todayStr()); break;
     case 'checkin-fazer': doCheckinFimDia(todayStr()); break;
     case 'ver-resumo-dia': openDaySummaryModal(a.date); break;
