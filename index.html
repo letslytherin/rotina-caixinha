@@ -171,6 +171,10 @@ textarea{resize:vertical;min-height:48px;}
 .muted{color:var(--muted);font-size:12.5px;line-height:1.5;}
 .empty-state{text-align:center;padding:36px 16px;color:var(--muted);font-size:13px;line-height:1.6;}
 .badge-fire{display:inline-flex;align-items:center;gap:5px;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-border);border-radius:20px;padding:5px 12px;font-size:11px;font-weight:800;margin-bottom:4px;}
+.badge-streak{display:inline-flex;align-items:center;gap:5px;background:var(--success-soft);color:var(--success);border:1px solid var(--success-border);border-radius:20px;padding:5px 12px;font-size:11px;font-weight:800;margin-bottom:4px;margin-right:6px;}
+.peso-form{display:flex;gap:8px;}
+.peso-form input{flex:1;}
+.peso-chart{width:100%;height:auto;display:block;}
 </style>
 </head>
 <body>
@@ -190,6 +194,8 @@ function defaultState(){
     weekends:{},
     caixinha:{ historicoQuitacoes:[] },
     financas:{ gastos:[] },
+    peso:{ historico:[] },
+    appStartDate:null,
     weeklySummaryLastShownWeek:null,
     lastEvaluatedDate:null
   };
@@ -204,6 +210,7 @@ function load(){
       config: Object.assign(base.config, parsed.config||{}),
       caixinha: Object.assign(base.caixinha, parsed.caixinha||{}),
       financas: Object.assign(base.financas, parsed.financas||{}),
+      peso: Object.assign(base.peso, parsed.peso||{}),
       days: parsed.days||{},
       weekends: parsed.weekends||{}
     });
@@ -598,6 +605,77 @@ function evaluateOnLoad(){
   save();
 }
 
+/* ---------- streak ---------- */
+function computeStreak(){
+  let streak = 0;
+  let cursor = todayStr();
+  const limite = state.appStartDate || todayStr();
+  while(cursor >= limite){
+    const temMulta = state.financas.gastos.some(g=>g.categoria==='caixinha' && g.data===cursor);
+    if(temMulta) break;
+    streak++;
+    cursor = addDays(cursor,-1);
+  }
+  return streak;
+}
+
+/* ---------- peso ---------- */
+function registrarPeso(dataStr, valor){
+  if(!valor || valor<=0) return;
+  const existente = state.peso.historico.find(h=>h.data===dataStr);
+  if(existente){ existente.valor = valor; }
+  else { state.peso.historico.push({ id:uid(), data:dataStr, valor }); }
+  if(dayOfWeek(dataStr)===6 || dayOfWeek(dataStr)===0){
+    ensureWeekend(saturdayKeyFor(dataStr)).items.peso = true;
+  }
+  save(); render();
+  toastSimple(`Peso registrado: ${valor} kg.`);
+}
+function renderPesoChart(historico){
+  if(historico.length < 2){
+    return '<p class="empty-state">Registre pelo menos 2 pesagens pra ver o gráfico.</p>';
+  }
+  const W=320, H=140, padX=20, padY=20;
+  const valores = historico.map(h=>h.valor);
+  const min = Math.min(...valores), max = Math.max(...valores);
+  const range = (max-min) || 1;
+  const n = historico.length;
+  const stepX = (W-padX*2)/(n-1);
+  const pontos = historico.map((h,i)=>({
+    x: padX + i*stepX,
+    y: H-padY-((h.valor-min)/range)*(H-padY*2),
+    valor: h.valor, data: h.data
+  }));
+  const linha = pontos.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const area = `M${pontos[0].x.toFixed(1)},${H-padY} L${linha.split(' ').join(' L')} L${pontos[pontos.length-1].x.toFixed(1)},${H-padY} Z`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="peso-chart" role="img" aria-label="Gráfico de evolução do peso">
+    <path d="${area}" fill="var(--accent)" fill-opacity=".14"/>
+    <polyline points="${linha}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    ${pontos.map(p=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" fill="var(--accent-hi)" stroke="var(--surface)" stroke-width="2"/>`).join('')}
+  </svg>
+  <div class="row-between" style="margin-top:2px;"><span>${formatBR(pontos[0].data)} · ${pontos[0].valor}kg</span><span>${formatBR(pontos[pontos.length-1].data)} · ${pontos[pontos.length-1].valor}kg</span></div>`;
+}
+function renderPesoCard(){
+  const historico = state.peso.historico.slice().sort((a,b)=>a.data.localeCompare(b.data));
+  const ultimo = historico.length ? historico[historico.length-1] : null;
+  const primeiro = historico.length ? historico[0] : null;
+  const variacao = (ultimo && primeiro) ? (ultimo.valor - primeiro.valor) : 0;
+  return `<div class="card">
+    <div class="section-title">⚖️ Peso</div>
+    <form id="form-peso" class="peso-form">
+      <input type="number" step="0.1" min="30" max="250" name="valor" placeholder="Peso de hoje (kg)" required>
+      <button type="submit" class="btn btn-primary">Salvar</button>
+    </form>
+    ${historico.length ? `
+      <div class="stat-row" style="margin-top:14px;">
+        <div class="stat-box"><div class="num">${ultimo.valor} kg</div><div class="lbl">atual</div></div>
+        <div class="stat-box"><div class="num" style="color:${variacao<=0?'var(--success)':'var(--danger)'}">${variacao>0?'+':''}${variacao.toFixed(1)} kg</div><div class="lbl">desde o início</div></div>
+      </div>
+      <div style="margin-top:14px;">${renderPesoChart(historico.slice(-12))}</div>
+    ` : `<p class="hint" style="margin-top:10px;">Registre seu peso pra começar a acompanhar a evolução.</p>`}
+  </div>`;
+}
+
 /* ---------- financeiro ---------- */
 function computeSaldoCaixinhaAtual(){
   const hist = state.caixinha.historicoQuitacoes;
@@ -857,7 +935,10 @@ function renderHoje(){
   const isSat = dayOfWeek(today)===6;
   const dataFormatada = formatBR(today);
   const heroTag = wd ? 'Rotina de performance' : (isSat ? 'Treino + organização da semana' : 'Rotina de organização da semana');
-  let html = `<div class="card hero"><div class="hero-date">${dataFormatada}</div><div class="hero-tag">${heroTag}</div>${isModoConcurso(today)?'<div class="badge-fire" style="margin-top:10px;">🔥 Modo concurso — VOCÊ NÃO PODE pular estudo agora. Custa R$20.</div>':''}</div>`;
+  const streak = computeStreak();
+  let html = `<div class="card hero"><div class="hero-date">${dataFormatada}</div><div class="hero-tag">${heroTag}</div>
+    ${streak>0?`<div class="badge-streak" style="margin-top:10px;">🔥 ${streak} dia${streak>1?'s':''} sem multa</div>`:''}
+    ${isModoConcurso(today)?'<div class="badge-fire" style="margin-top:10px;">🔥 Modo concurso — VOCÊ NÃO PODE pular estudo agora. Custa R$20.</div>':''}</div>`;
   html += renderCoachBanner();
 
   if(wd || isSat){
@@ -980,6 +1061,7 @@ function renderFds(){
     }
     html += `</div><div class="card"><p class="muted">Próximo fim de semana em <strong style="color:var(--text)">${diasParaSabado}</strong> dia(s).</p></div>`;
   }
+  html += renderPesoCard();
   return html;
 }
 
@@ -997,6 +1079,7 @@ function renderCaixinha(){
     <div class="stat-row">
       <div class="stat-box"><div class="num">${brl(semanaTotal)}</div><div class="lbl">esta semana</div></div>
       <div class="stat-box"><div class="num">${brl(mesTotal)}</div><div class="lbl">este mês</div></div>
+      <div class="stat-box"><div class="num">🔥 ${computeStreak()}</div><div class="lbl">streak</div></div>
     </div>
   </div>`;
 
@@ -1232,6 +1315,11 @@ document.addEventListener('submit', (e)=>{
     addDespesaManual(form.categoria.value, Number(form.valor.value), form.nota.value, form.data.value||todayStr());
     form.reset();
   }
+  if(form.id==='form-peso'){
+    e.preventDefault();
+    registrarPeso(todayStr(), Number(form.valor.value));
+    form.reset();
+  }
 });
 
 /* ---------- lembretes (melhor esforço, app aberto) ---------- */
@@ -1282,6 +1370,7 @@ window.addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); deferr
 
 document.addEventListener('DOMContentLoaded', ()=>{
   state = load();
+  if(!state.appStartDate){ state.appStartDate = todayStr(); save(); }
   evaluateOnLoad();
   render();
   checkWeeklySummaryAndShow();
