@@ -78,6 +78,10 @@ body{
 .exercicio summary .item-label{font-size:14.5px;font-weight:700;}
 .exercicio summary .item-time{text-align:right;}
 .como-fazer{margin:0 0 12px;font-size:12.5px;color:var(--text-dim);line-height:1.55;background:var(--surface-2);border-radius:var(--radius-sm);padding:10px 12px;}
+.treino-modo{display:flex;gap:8px;margin-bottom:14px;}
+.modo-btn{flex:1;border:1px solid var(--border-soft);background:var(--surface-2);color:var(--muted);font-size:12.5px;font-weight:700;padding:10px 8px;border-radius:11px;cursor:pointer;transition:all .15s;}
+.modo-btn.ativo{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-border);}
+.treino-ilustracao{display:block;width:100%;height:auto;border-radius:16px;}
 .pill{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:800;padding:4px 9px;border-radius:20px;width:fit-content;letter-spacing:.2px;border:1px solid transparent;}
 .pill-ok{background:var(--success-soft);color:var(--success);border-color:var(--success-border);}
 .pill-bad{background:var(--danger-soft);color:var(--danger);border-color:var(--danger-border);}
@@ -266,6 +270,40 @@ function currentTreinoNivel(){
   return { nivel, count };
 }
 
+const ICON_TREINO_ACADEMIA = `<svg viewBox="0 0 320 110" class="treino-ilustracao" role="img" aria-label="Ilustração de treino de academia">
+  <defs><radialGradient id="glowA" cx="50%" cy="35%" r="75%">
+    <stop offset="0%" stop-color="var(--accent)" stop-opacity=".35"/>
+    <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+  </radialGradient></defs>
+  <rect x="0" y="0" width="320" height="110" rx="16" fill="var(--surface-2)"/>
+  <rect x="0" y="0" width="320" height="110" rx="16" fill="url(#glowA)"/>
+  <g transform="translate(160 55)">
+    <rect x="-68" y="-6" width="136" height="12" rx="6" fill="var(--accent)"/>
+    <circle cx="-72" cy="0" r="27" fill="none" stroke="var(--accent)" stroke-width="11"/>
+    <circle cx="72" cy="0" r="27" fill="none" stroke="var(--accent)" stroke-width="11"/>
+    <circle cx="-72" cy="0" r="13" fill="var(--surface-2)" stroke="var(--accent-hi)" stroke-width="4"/>
+    <circle cx="72" cy="0" r="13" fill="var(--surface-2)" stroke="var(--accent-hi)" stroke-width="4"/>
+  </g>
+</svg>`;
+const ICON_TREINO_BIKE = `<svg viewBox="0 0 320 110" class="treino-ilustracao" role="img" aria-label="Ilustração de pedalada">
+  <defs><radialGradient id="glowB" cx="50%" cy="35%" r="75%">
+    <stop offset="0%" stop-color="var(--accent)" stop-opacity=".35"/>
+    <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+  </radialGradient></defs>
+  <rect x="0" y="0" width="320" height="110" rx="16" fill="var(--surface-2)"/>
+  <rect x="0" y="0" width="320" height="110" rx="16" fill="url(#glowB)"/>
+  <g stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <circle cx="95" cy="78" r="24" stroke="var(--accent)" stroke-width="7"/>
+    <circle cx="225" cy="78" r="24" stroke="var(--accent)" stroke-width="7"/>
+    <path d="M95 78 L150 40 L190 78 L150 40 L165 78" stroke="var(--accent-hi)" stroke-width="6"/>
+    <path d="M95 78 L190 78" stroke="var(--accent-hi)" stroke-width="6"/>
+    <path d="M150 40 L138 26" stroke="var(--accent-hi)" stroke-width="6"/>
+    <path d="M190 78 L214 30" stroke="var(--accent-hi)" stroke-width="6"/>
+    <path d="M205 28 L223 32" stroke="var(--accent-hi)" stroke-width="6"/>
+    <path d="M20 52 H50 M14 64 H44 M22 40 H46" stroke="var(--accent)" stroke-opacity=".45" stroke-width="5"/>
+  </g>
+</svg>`;
+
 const WEEKEND_ITEMS = [
   { key:'faxina', label:'Faxina da casa', penalized:true },
   { key:'quentinhas', label:'Fazer quentinhas da semana', penalized:true },
@@ -323,7 +361,7 @@ function ensureWeekdayDay(dateStr){
   if(!state.days[dateStr]){
     state.days[dateStr] = {
       date:dateStr, type:'weekday',
-      items:{ treino:'pendente', estudo1:'pendente', estudo2:'pendente', estudo3:'pendente', trabalhoInicio:null, checkinFimDiaFeito:false },
+      items:{ treino:'pendente', tipoTreino:'academia', estudo1:'pendente', estudo2:'pendente', estudo3:'pendente', trabalhoInicio:null, checkinFimDiaFeito:false },
       refeicoes:{ ref1:{status:'pendente',obs:''}, ref2:{status:'pendente',obs:''}, ref3:{status:'pendente',obs:''} },
       agua:{ ml:0 },
       finalizado:false
@@ -336,7 +374,7 @@ function ensureWeekend(satKey){
     state.weekends[satKey] = {
       key:satKey,
       items:{ faxina:false, roupas:false, quentinhas:false, mercado:false, agenda:false, treinoPrep:false, financeiro:false, peso:false },
-      treino:'pendente',
+      treino:'pendente', tipoTreino:'academia',
       finalizado:false
     };
   }
@@ -371,6 +409,11 @@ function toggleTreinoUnified(dateStr, status){
     setTag(tag,10,'Treino de sábado não feito',satKey,'caixinha','weekend_treino');
     toast(10,'VOCÊ NÃO PODE pular treino no sábado. Emagrecimento não anda com desculpa de fim de semana.');
   } else { setTag(tag,0,'',satKey); }
+  save(); render();
+}
+function setTreinoTipo(dateStr, tipo){
+  if(isWeekday(dateStr)){ ensureWeekdayDay(dateStr).items.tipoTreino = tipo; }
+  else { ensureWeekend(saturdayKeyFor(dateStr)).tipoTreino = tipo; }
   save(); render();
 }
 function toggleEstudo(dateStr, key, status){
@@ -723,20 +766,31 @@ function itemRow(label,time,status,actionName,extraData,doneLabel,doneStatus,fai
   </div>`;
 }
 
-function renderTreinoCard(status, dateStr){
+function renderTreinoCard(status, dateStr, tipoTreino){
   const { nivel, count } = currentTreinoNivel();
   const proximo = TREINO_NIVEIS.find(n=>n.min>count);
+  const isBike = tipoTreino==='bike';
   return `<div class="card">
     <div class="section-title">🏋️ Treino do dia</div>
-    <div class="badge-fire">${nivel.nome} · treino nº ${count+1}</div>
-    <p class="muted" style="margin-top:8px;">Foco: emagrecimento e definição · circuito de máquinas guiadas</p>
-    <div class="row-between" style="margin-top:12px;"><span>${nivel.voltas} voltas · ${nivel.reps}</span><span>descanso ${nivel.descanso}</span></div>
-    <p class="hint" style="margin-top:0;">Toque em um exercício pra ver como fazer.</p>
-    <div class="divider"></div>
-    ${TREINO_EXERCICIOS.map((ex,i)=>`<details class="exercicio">
-      <summary><span class="item-label">${i+1}. ${ex.nome}</span><span class="item-time">${ex.detalhe}</span></summary>
-      <p class="como-fazer">${ex.comoFazer}</p>
-    </details>`).join('')}
+    <div class="treino-modo">
+      <button class="modo-btn ${!isBike?'ativo':''}" data-action="treino-tipo" data-date="${dateStr}" data-tipo="academia">🏋️ Academia</button>
+      <button class="modo-btn ${isBike?'ativo':''}" data-action="treino-tipo" data-date="${dateStr}" data-tipo="bike">🚴 Bike 25km</button>
+    </div>
+    ${isBike ? ICON_TREINO_BIKE : ICON_TREINO_ACADEMIA}
+    <div class="badge-fire" style="margin-top:12px;">${nivel.nome} · treino nº ${count+1}</div>
+    ${isBike ? `
+      <p class="muted" style="margin-top:8px;">Sem academia hoje? 25km de bike (rua ou ergométrica) valem como treino completo do dia.</p>
+      <p class="hint">Ritmo que suba a respiração mas dê pra sustentar os 25km inteiros — não precisa virar corrida.</p>
+    ` : `
+      <p class="muted" style="margin-top:8px;">Foco: emagrecimento e definição · circuito de máquinas guiadas</p>
+      <div class="row-between" style="margin-top:12px;"><span>${nivel.voltas} voltas · ${nivel.reps}</span><span>descanso ${nivel.descanso}</span></div>
+      <p class="hint" style="margin-top:0;">Toque em um exercício pra ver como fazer.</p>
+      <div class="divider"></div>
+      ${TREINO_EXERCICIOS.map((ex,i)=>`<details class="exercicio">
+        <summary><span class="item-label">${i+1}. ${ex.nome}</span><span class="item-time">${ex.detalhe}</span></summary>
+        <p class="como-fazer">${ex.comoFazer}</p>
+      </details>`).join('')}
+    `}
     <div class="divider"></div>
     <div class="item-row" style="border-bottom:none;padding-bottom:0;">
       <div class="item-info"><div class="item-label">Treino de hoje</div>${statusPill(status)}</div>
@@ -746,7 +800,7 @@ function renderTreinoCard(status, dateStr){
       </div>
     </div>
     <p class="hint">${proximo ? `Faltam ${proximo.min-count} treino(s) pra subir pro ${proximo.nome}.` : 'Nível máximo do circuito — a partir daqui, ajuste carga e intensidade por conta própria conforme evolui.'}</p>
-    <p class="hint">Ajuste carga aos poucos e converse com um profissional da academia se sentir dor ou dificuldade.</p>
+    ${!isBike ? '<p class="hint">Ajuste carga aos poucos e converse com um profissional da academia se sentir dor ou dificuldade.</p>' : ''}
   </div>`;
 }
 
@@ -761,7 +815,8 @@ function renderHoje(){
 
   if(wd || isSat){
     const treinoStatus = wd ? ensureWeekdayDay(today).items.treino : ensureWeekend(today).treino;
-    html += renderTreinoCard(treinoStatus, today);
+    const tipoTreino = wd ? ensureWeekdayDay(today).items.tipoTreino : ensureWeekend(today).tipoTreino;
+    html += renderTreinoCard(treinoStatus, today, tipoTreino);
   }
 
   if(wd){
@@ -1085,6 +1140,7 @@ document.addEventListener('click', (e)=>{
     case 'nav': activeTab = a.tab; render(); break;
     case 'day-status': toggleEstudo(todayStr(), a.key, a.status); break;
     case 'treino-status': toggleTreinoUnified(a.date, a.status); break;
+    case 'treino-tipo': setTreinoTipo(a.date, a.tipo); break;
     case 'ref-status': toggleRefeicao(todayStr(), a.key, a.status); break;
     case 'agua-add': addAgua(todayStr(), Number(a.ml)); break;
     case 'trabalho-registrar': registrarTrabalho(todayStr()); break;
