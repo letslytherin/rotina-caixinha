@@ -69,6 +69,15 @@ body{
 .item-info{display:flex;flex-direction:column;gap:5px;}
 .item-label{font-size:14.5px;font-weight:700;letter-spacing:-.1px;}
 .item-time{font-size:11px;color:var(--muted);font-weight:600;}
+.exercicio{border-bottom:1px solid var(--border-soft);}
+.exercicio:last-of-type{border-bottom:none;}
+.exercicio summary{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;cursor:pointer;list-style:none;}
+.exercicio summary::-webkit-details-marker{display:none;}
+.exercicio summary::after{content:"›";font-size:18px;color:var(--muted);transform:rotate(90deg);transition:transform .2s;flex-shrink:0;}
+.exercicio[open] summary::after{transform:rotate(270deg);}
+.exercicio summary .item-label{font-size:14.5px;font-weight:700;}
+.exercicio summary .item-time{text-align:right;}
+.como-fazer{margin:0 0 12px;font-size:12.5px;color:var(--text-dim);line-height:1.55;background:var(--surface-2);border-radius:var(--radius-sm);padding:10px 12px;}
 .pill{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:800;padding:4px 9px;border-radius:20px;width:fit-content;letter-spacing:.2px;border:1px solid transparent;}
 .pill-ok{background:var(--success-soft);color:var(--success);border-color:var(--success-border);}
 .pill-bad{background:var(--danger-soft);color:var(--danger);border-color:var(--danger-border);}
@@ -225,18 +234,18 @@ const AGUA_META = 2800;
 const INSCRICAO_VALOR = 85;
 
 const TREINO_EXERCICIOS = [
-  { nome:'Esteira ou bike — aquecimento', detalhe:'5–8 min, ritmo leve a moderado' },
-  { nome:'Leg press 45°', detalhe:'pernas' },
-  { nome:'Cadeira extensora', detalhe:'quadríceps' },
-  { nome:'Cadeira flexora', detalhe:'posterior de coxa' },
-  { nome:'Cadeira abdutora', detalhe:'glúteo e quadril' },
-  { nome:'Puxada frente (pulley)', detalhe:'costas' },
-  { nome:'Remada sentada (máquina)', detalhe:'costas' },
-  { nome:'Supino ou peck deck (máquina)', detalhe:'peito' },
-  { nome:'Desenvolvimento (máquina)', detalhe:'ombro' },
-  { nome:'Panturrilha (máquina)', detalhe:'panturrilha' },
-  { nome:'Abdominal (máquina ou prancha)', detalhe:'core' },
-  { nome:'Esteira ou bike — finalização', detalhe:'10–15 min intervalado, queima' }
+  { nome:'Esteira ou bike — aquecimento', detalhe:'5–8 min, ritmo leve a moderado', comoFazer:'Ande ou pedale num ritmo que dê pra conversar, sem ficar ofegante. É só pra esquentar o corpo antes das máquinas.' },
+  { nome:'Leg press 45°', detalhe:'pernas', comoFazer:'Sente no banco, pés na plataforma na largura do quadril. Empurre estendendo as pernas sem travar o joelho, depois desça controlando até formar 90° no joelho.' },
+  { nome:'Cadeira extensora', detalhe:'quadríceps', comoFazer:'Sente com as costas apoiadas, tornozelos atrás do rolo. Estenda as pernas quase até esticar de vez, segure 1 segundo e volte devagar.' },
+  { nome:'Cadeira flexora', detalhe:'posterior de coxa', comoFazer:'Ajuste o rolo atrás dos tornozelos. Flexione os joelhos puxando o rolo em direção aos glúteos, depois volte controlando sem deixar o peso bater.' },
+  { nome:'Cadeira abdutora', detalhe:'glúteo e quadril', comoFazer:'Sente com as pernas fechadas dentro dos apoios. Empurre as pernas pra fora contra a resistência, depois volte devagar sem bater as placas.' },
+  { nome:'Puxada frente (pulley)', detalhe:'costas', comoFazer:'Sente de frente pro aparelho, segure a barra um pouco mais aberta que os ombros. Puxe até a altura do peito levando os cotovelos pra baixo, solte controlando.' },
+  { nome:'Remada sentada (máquina)', detalhe:'costas', comoFazer:'Sente com o peito apoiado, segure os punhos. Puxe os cotovelos pra trás juntando as escápulas, volte devagar sem deixar o peso bater.' },
+  { nome:'Supino ou peck deck (máquina)', detalhe:'peito', comoFazer:'Ajuste o banco na altura do peito. Empurre ou junte os braços à frente sem travar o cotovelo, volte controlando até sentir alongar.' },
+  { nome:'Desenvolvimento (máquina)', detalhe:'ombro', comoFazer:'Sente com as costas apoiadas, punhos na altura dos ombros. Empurre pra cima quase esticando os braços, desça controlando.' },
+  { nome:'Panturrilha (máquina)', detalhe:'panturrilha', comoFazer:'Apoie a ponta dos pés na plataforma, calcanhar livre. Suba na ponta dos pés o máximo que der, segure 1 segundo e desça alongando bem.' },
+  { nome:'Abdominal (máquina ou prancha)', detalhe:'core', comoFazer:'Na máquina: segure os apoios e flexione o tronco contraindo o abdômen. Na prancha: antebraços e pontas dos pés no chão, corpo reto por 20–40s.' },
+  { nome:'Esteira ou bike — finalização', detalhe:'10–15 min intervalado, queima', comoFazer:'Alterne 1 min mais forte com 1–2 min mais leve, repetindo até completar o tempo. É pra elevar a queima calórica no fim do treino.' }
 ];
 const TREINO_NIVEIS = [
   { min:0, nome:'Nível 1 — Adaptação', voltas:2, reps:'15 reps', descanso:'30–40s entre exercícios' },
@@ -722,8 +731,12 @@ function renderTreinoCard(status, dateStr){
     <div class="badge-fire">${nivel.nome} · treino nº ${count+1}</div>
     <p class="muted" style="margin-top:8px;">Foco: emagrecimento e definição · circuito de máquinas guiadas</p>
     <div class="row-between" style="margin-top:12px;"><span>${nivel.voltas} voltas · ${nivel.reps}</span><span>descanso ${nivel.descanso}</span></div>
+    <p class="hint" style="margin-top:0;">Toque em um exercício pra ver como fazer.</p>
     <div class="divider"></div>
-    ${TREINO_EXERCICIOS.map((ex,i)=>`<div class="item-row"><div class="item-info"><div class="item-label">${i+1}. ${ex.nome}</div><div class="item-time">${ex.detalhe}</div></div></div>`).join('')}
+    ${TREINO_EXERCICIOS.map((ex,i)=>`<details class="exercicio">
+      <summary><span class="item-label">${i+1}. ${ex.nome}</span><span class="item-time">${ex.detalhe}</span></summary>
+      <p class="como-fazer">${ex.comoFazer}</p>
+    </details>`).join('')}
     <div class="divider"></div>
     <div class="item-row" style="border-bottom:none;padding-bottom:0;">
       <div class="item-info"><div class="item-label">Treino de hoje</div>${statusPill(status)}</div>

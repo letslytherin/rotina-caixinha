@@ -1,4 +1,4 @@
-const CACHE_NAME = 'caixinha-castigo-v2';
+const CACHE_NAME = 'caixinha-castigo-v3';
 const APP_SHELL = [
   './index.html',
   './manifest.json',
@@ -32,7 +32,7 @@ self.addEventListener('fetch', (event) => {
 
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request)
+      fetch(new Request(event.request.url, { cache: 'no-store' }))
         .then((response) => {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
