@@ -764,9 +764,35 @@ function computeEstudosProgresso(){
   const concluidos = state.estudos.topicos.filter(t=>t.concluido).length;
   return { total, concluidos, pct: total>0 ? Math.round((concluidos/total)*100) : 0 };
 }
-function renderEstudos(){
+function getDisciplina(nome){
+  const idx = nome.indexOf(':');
+  return idx>=0 ? nome.slice(0,idx).trim() : 'Geral';
+}
+function getFilaIntercalada(){
   const pendentes = state.estudos.topicos.filter(t=>!t.concluido);
-  const hoje = pendentes.slice(0, TOPICOS_POR_DIA);
+  const porDisciplina = {};
+  const ordemDisciplinas = [];
+  pendentes.forEach(t=>{
+    const d = getDisciplina(t.nome);
+    if(!porDisciplina[d]){ porDisciplina[d]=[]; ordemDisciplinas.push(d); }
+    porDisciplina[d].push(t);
+  });
+  const resultado = [];
+  let indice = 0;
+  let restantes = pendentes.length;
+  while(restantes>0 && ordemDisciplinas.length>0){
+    const d = ordemDisciplinas[indice % ordemDisciplinas.length];
+    const grupo = porDisciplina[d];
+    if(grupo.length){
+      resultado.push(grupo.shift());
+      restantes--;
+    }
+    indice++;
+  }
+  return resultado;
+}
+function renderEstudos(){
+  const hoje = getFilaIntercalada().slice(0, TOPICOS_POR_DIA);
   const { total, concluidos, pct } = computeEstudosProgresso();
 
   let html = `<div class="card"><div class="section-title">📚 Hoje você estuda isso</div>`;
