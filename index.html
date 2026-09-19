@@ -183,14 +183,6 @@ textarea{resize:vertical;min-height:48px;}
 .fixo-form{display:flex;gap:8px;margin-top:10px;}
 .fixo-form input[name="nome"]{flex:1;}
 .fixo-form input[name="valor"]{width:84px;flex-shrink:0;}
-.materia-row{display:flex;align-items:center;gap:8px;padding:11px 0;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;}
-.materia-row:last-of-type{border-bottom:none;}
-.materia-nome{flex:1 1 100%;font-size:14px;font-weight:700;margin-bottom:2px;}
-.dias-semana{display:flex;gap:4px;flex:1;}
-.dia-chip{border:1px solid var(--border-soft);background:var(--surface-2);color:var(--muted);font-size:10.5px;font-weight:700;padding:7px 0;border-radius:8px;cursor:pointer;flex:1;text-align:center;}
-.dia-chip.ativo{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-border);}
-.materia-form{display:flex;gap:8px;margin-top:12px;}
-.materia-form input{flex:1;}
 </style>
 </head>
 <body>
@@ -212,8 +204,7 @@ function defaultState(){
     financas:{ gastos:[] },
     peso:{ historico:[] },
     gastosFixos:{ itens:[], seeded:false },
-    estudos:{ materias:[], grade:{0:[],1:[],2:[],3:[],4:[],5:[],6:[]} },
-    estudosDiario:{},
+    estudos:{ topicos:[] },
     appStartDate:null,
     weeklySummaryLastShownWeek:null,
     lastEvaluatedDate:null
@@ -232,7 +223,6 @@ function load(){
       peso: Object.assign(base.peso, parsed.peso||{}),
       gastosFixos: Object.assign(base.gastosFixos, parsed.gastosFixos||{}),
       estudos: Object.assign(base.estudos, parsed.estudos||{}),
-      estudosDiario: parsed.estudosDiario||{},
       days: parsed.days||{},
       weekends: parsed.weekends||{}
     });
@@ -264,9 +254,7 @@ function uid(){ return Math.random().toString(36).slice(2,9)+Date.now().toString
 /* ---------- domínio ---------- */
 const STUDY_KEYS = ['estudo1','estudo2','estudo3'];
 const STUDY_LABELS = { estudo1:'Bloco de estudo 1 — Gran Cursos', estudo2:'Bloco de estudo 2 — Gran Cursos', estudo3:'Bloco de estudo 3 — questões/simulado' };
-const DIA_SEMANA_LABEL = { 0:'Domingo', 1:'Segunda-feira', 2:'Terça-feira', 3:'Quarta-feira', 4:'Quinta-feira', 5:'Sexta-feira', 6:'Sábado' };
-const DIA_SEMANA_ABREV = { 0:'Dom', 1:'Seg', 2:'Ter', 3:'Qua', 4:'Qui', 5:'Sex', 6:'Sáb' };
-const ORDEM_DIAS = [1,2,3,4,5,6,0];
+const TOPICOS_POR_DIA = 3;
 const STUDY_TIMES = { estudo1:'18:30', estudo2:'19:30', estudo3:'20:30' };
 const REF_KEYS = ['ref1','ref2','ref3'];
 const REF_LABELS = { ref1:'Café da manhã', ref2:'Almoço', ref3:'Jantar' };
@@ -711,80 +699,76 @@ function renderPesoCard(){
 }
 
 /* ---------- estudos ---------- */
-function addMateria(nome){
-  if(!nome) return;
-  state.estudos.materias.push({ id:uid(), nome });
+function addTopicos(textoBruto){
+  const linhas = (textoBruto||'').split('\n').map(l=>l.trim()).filter(Boolean);
+  if(!linhas.length) return;
+  linhas.forEach(nome=>{ state.estudos.topicos.push({ id:uid(), nome, concluido:false }); });
+  save(); render();
+  toastSimple(`${linhas.length} tópico(s) adicionado(s) ao edital.`);
+}
+function toggleTopicoConcluido(id){
+  const t = state.estudos.topicos.find(x=>x.id===id);
+  if(!t) return;
+  t.concluido = !t.concluido;
   save(); render();
 }
-function deleteMateria(id){
-  if(!confirm('Remover esta matéria da grade?')) return;
-  state.estudos.materias = state.estudos.materias.filter(m=>m.id!==id);
-  Object.keys(state.estudos.grade).forEach(d=>{
-    state.estudos.grade[d] = state.estudos.grade[d].filter(mid=>mid!==id);
-  });
-  Object.keys(state.estudosDiario).forEach(dt=>{
-    state.estudosDiario[dt] = state.estudosDiario[dt].filter(mid=>mid!==id);
-  });
+function deleteTopico(id){
+  if(!confirm('Remover este tópico da lista?')) return;
+  state.estudos.topicos = state.estudos.topicos.filter(t=>t.id!==id);
   save(); render();
 }
-function toggleMateriaGrade(dow, materiaId){
-  const arr = state.estudos.grade[dow];
-  const idx = arr.indexOf(materiaId);
-  if(idx>=0) arr.splice(idx,1); else arr.push(materiaId);
-  save(); render();
-}
-function toggleMateriaConcluida(dateStr, materiaId){
-  if(!state.estudosDiario[dateStr]) state.estudosDiario[dateStr] = [];
-  const arr = state.estudosDiario[dateStr];
-  const idx = arr.indexOf(materiaId);
-  if(idx>=0) arr.splice(idx,1); else arr.push(materiaId);
-  save(); render();
+function computeEstudosProgresso(){
+  const total = state.estudos.topicos.length;
+  const concluidos = state.estudos.topicos.filter(t=>t.concluido).length;
+  return { total, concluidos, pct: total>0 ? Math.round((concluidos/total)*100) : 0 };
 }
 function renderEstudos(){
-  const today = todayStr();
-  const dow = dayOfWeek(today);
-  const materiasHojeIds = state.estudos.grade[dow] || [];
-  const concluidasHoje = state.estudosDiario[today] || [];
+  const pendentes = state.estudos.topicos.filter(t=>!t.concluido);
+  const hoje = pendentes.slice(0, TOPICOS_POR_DIA);
+  const { total, concluidos, pct } = computeEstudosProgresso();
 
-  let html = `<div class="card"><div class="section-title">📚 Estudo de hoje — ${DIA_SEMANA_LABEL[dow]}</div>`;
-  if(materiasHojeIds.length===0){
-    html += `<p class="empty-state">Nenhuma matéria programada pra hoje. Monte sua grade semanal abaixo.</p>`;
+  let html = `<div class="card"><div class="section-title">📚 Hoje você estuda isso</div>`;
+  if(total===0){
+    html += `<p class="empty-state">Nenhum tópico cadastrado ainda. Cole o conteúdo do edital abaixo pra começar.</p>`;
+  } else if(hoje.length===0){
+    html += `<p class="hint" style="margin-top:0;">🎉 Você zerou o edital. Todos os ${total} tópicos foram concluídos.</p>`;
   } else {
-    materiasHojeIds.forEach(mid=>{
-      const materia = state.estudos.materias.find(m=>m.id===mid);
-      if(!materia) return;
-      const feito = concluidasHoje.includes(mid);
+    hoje.forEach(t=>{
       html += `<div class="checklist-item">
-        <div class="checkbox ${feito?'checked':''}" data-action="estudo-materia-toggle" data-id="${mid}">${feito?'✓':''}</div>
-        <div class="checklist-label">${materia.nome}</div>
+        <div class="checkbox" data-action="topico-toggle" data-id="${t.id}"></div>
+        <div class="checklist-label">${t.nome}</div>
       </div>`;
     });
+    html += `<p class="hint">Marque como concluído pra liberar o próximo tópico da fila.</p>`;
   }
   html += `</div>`;
 
-  html += `<div class="card"><div class="section-title">🗓️ Grade semanal</div>
-    <p class="hint" style="margin-top:0;">Toque nos dias em que cada matéria deve ser estudada.</p>`;
-  if(state.estudos.materias.length===0){
-    html += `<p class="empty-state">Nenhuma matéria cadastrada ainda. Adicione as matérias do seu edital abaixo.</p>`;
-  } else {
-    state.estudos.materias.forEach(m=>{
-      html += `<div class="materia-row">
-        <div class="materia-nome">${m.nome}</div>
-        <div class="dias-semana">
-          ${ORDEM_DIAS.map(d=>{
-            const ativo = (state.estudos.grade[d]||[]).includes(m.id);
-            return `<button class="dia-chip ${ativo?'ativo':''}" data-action="estudo-grade-toggle" data-dow="${d}" data-id="${m.id}">${DIA_SEMANA_ABREV[d]}</button>`;
-          }).join('')}
-        </div>
-        <button class="btn btn-secondary fixo-del" data-action="estudo-materia-delete" data-id="${m.id}">✕</button>
+  if(total>0){
+    html += `<div class="card"><div class="section-title">📈 Progresso do edital</div>
+      <div class="row-between"><span>${concluidos} de ${total} tópicos</span><span>${pct}%</span></div>
+      <div class="progress"><div class="progress-fill good" style="width:${pct}%"></div></div>
+    </div>`;
+  }
+
+  html += `<div class="card"><div class="section-title">📋 Conteúdo do edital</div>
+    <p class="hint" style="margin-top:0;">Cole o conteúdo do edital, um tópico por linha, e a fila se organiza sozinha.</p>
+    <form id="form-topicos-bulk">
+      <textarea name="conteudo" rows="4" placeholder="Língua Portuguesa: interpretação de texto&#10;Direito Administrativo: atos administrativos&#10;Raciocínio Lógico: proposições"></textarea>
+      <button type="submit" class="btn btn-primary btn-block" style="margin-top:10px;">Adicionar à fila</button>
+    </form>
+  </div>`;
+
+  if(total>0){
+    html += `<div class="card"><div class="section-title">📑 Lista completa (${concluidos}/${total})</div>`;
+    state.estudos.topicos.forEach(t=>{
+      html += `<div class="checklist-item">
+        <div class="checkbox ${t.concluido?'checked':''}" data-action="topico-toggle" data-id="${t.id}">${t.concluido?'✓':''}</div>
+        <div class="checklist-label" style="${t.concluido?'text-decoration:line-through;opacity:.5;':''}">${t.nome}</div>
+        <button class="btn btn-secondary fixo-del" data-action="topico-delete" data-id="${t.id}">✕</button>
       </div>`;
     });
+    html += `</div>`;
   }
-  html += `<form id="form-materia" class="materia-form">
-    <input type="text" name="nome" placeholder="Nova matéria (ex: Português)" required>
-    <button type="submit" class="btn btn-primary">+</button>
-  </form>`;
-  html += `</div>`;
   return html;
 }
 
@@ -1480,9 +1464,8 @@ document.addEventListener('click', (e)=>{
     case 'delete-despesa': deleteDespesa(a.id); break;
     case 'fixo-toggle-pago': toggleFixoPago(a.id); break;
     case 'fixo-delete': deleteGastoFixo(a.id); break;
-    case 'estudo-materia-toggle': toggleMateriaConcluida(todayStr(), a.id); break;
-    case 'estudo-grade-toggle': toggleMateriaGrade(Number(a.dow), a.id); break;
-    case 'estudo-materia-delete': deleteMateria(a.id); break;
+    case 'topico-toggle': toggleTopicoConcluido(a.id); break;
+    case 'topico-delete': deleteTopico(a.id); break;
     case 'notif-ativar': ativarNotificacoes(); break;
     case 'instalar-app':
       if(deferredInstallPrompt){ deferredInstallPrompt.prompt(); deferredInstallPrompt=null; }
@@ -1515,9 +1498,9 @@ document.addEventListener('submit', (e)=>{
     addGastoFixo(form.nome.value, form.valor.value);
     form.reset();
   }
-  if(form.id==='form-materia'){
+  if(form.id==='form-topicos-bulk'){
     e.preventDefault();
-    addMateria(form.nome.value);
+    addTopicos(form.conteudo.value);
     form.reset();
   }
 });
