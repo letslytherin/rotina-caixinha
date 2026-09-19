@@ -175,6 +175,14 @@ textarea{resize:vertical;min-height:48px;}
 .peso-form{display:flex;gap:8px;}
 .peso-form input{flex:1;}
 .peso-chart{width:100%;height:auto;display:block;}
+.fixo-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-soft);}
+.fixo-item:last-of-type{border-bottom:none;}
+.fixo-info{flex:1;min-width:0;}
+.fixo-valor-input{width:84px;flex-shrink:0;text-align:right;padding:8px 9px;}
+.fixo-del{flex-shrink:0;padding:8px 10px;}
+.fixo-form{display:flex;gap:8px;margin-top:10px;}
+.fixo-form input[name="nome"]{flex:1;}
+.fixo-form input[name="valor"]{width:84px;flex-shrink:0;}
 </style>
 </head>
 <body>
@@ -195,6 +203,7 @@ function defaultState(){
     caixinha:{ historicoQuitacoes:[] },
     financas:{ gastos:[] },
     peso:{ historico:[] },
+    gastosFixos:{ itens:[], seeded:false },
     appStartDate:null,
     weeklySummaryLastShownWeek:null,
     lastEvaluatedDate:null
@@ -211,6 +220,7 @@ function load(){
       caixinha: Object.assign(base.caixinha, parsed.caixinha||{}),
       financas: Object.assign(base.financas, parsed.financas||{}),
       peso: Object.assign(base.peso, parsed.peso||{}),
+      gastosFixos: Object.assign(base.gastosFixos, parsed.gastosFixos||{}),
       days: parsed.days||{},
       weekends: parsed.weekends||{}
     });
@@ -329,7 +339,16 @@ const EXPENSE_CATEGORIES = [
   { key:'academia', label:'🏋️ Academia/Treino' },
   { key:'lazer', label:'💸 Lazer/Impulso' }
 ];
-const ALL_CATEGORY_LABELS = { mercado:'🛒 Mercado', estudos:'📚 Estudos', suplementos:'💊 Suplementos/Saúde', academia:'🏋️ Academia/Treino', lazer:'💸 Lazer/Impulso', delivery:'🍕 Delivery/iFood', caixinha:'🐯 Caixinha de castigo' };
+const ALL_CATEGORY_LABELS = { mercado:'🛒 Mercado', estudos:'📚 Estudos', suplementos:'💊 Suplementos/Saúde', academia:'🏋️ Academia/Treino', lazer:'💸 Lazer/Impulso', delivery:'🍕 Delivery/iFood', caixinha:'🐯 Caixinha de castigo', fixos:'📌 Gastos fixos' };
+const GASTOS_FIXOS_PADRAO = [
+  { nome:'Aluguel + Internet', valor:666 },
+  { nome:'Energia', valor:0 },
+  { nome:'MEI', valor:0 },
+  { nome:'Academia da mamis', valor:0 },
+  { nome:'Academia minha', valor:0 },
+  { nome:'Netflix', valor:0 },
+  { nome:'Plataforma Gran Cursos', valor:0 }
+];
 
 const GENERIC_MESSAGES = [
   'Você está R$XX mais pobre hoje. Bom dia. Agora levanta e vai treinar.',
@@ -673,6 +692,74 @@ function renderPesoCard(){
       </div>
       <div style="margin-top:14px;">${renderPesoChart(historico.slice(-12))}</div>
     ` : `<p class="hint" style="margin-top:10px;">Registre seu peso pra começar a acompanhar a evolução.</p>`}
+  </div>`;
+}
+
+/* ---------- gastos fixos ---------- */
+function ensureGastosFixosSeed(){
+  if(!state.gastosFixos.seeded){
+    state.gastosFixos.itens = GASTOS_FIXOS_PADRAO.map(i=>({ id:uid(), nome:i.nome, valor:i.valor }));
+    state.gastosFixos.seeded = true;
+    save();
+  }
+}
+function addGastoFixo(nome, valor){
+  if(!nome) return;
+  state.gastosFixos.itens.push({ id:uid(), nome, valor:Number(valor)||0 });
+  save(); render();
+}
+function updateGastoFixoValor(id, valor){
+  const item = state.gastosFixos.itens.find(i=>i.id===id);
+  if(!item) return;
+  item.valor = Number(valor)||0;
+  save(); render();
+}
+function deleteGastoFixo(id){
+  if(!confirm('Remover este gasto fixo da lista?')) return;
+  state.gastosFixos.itens = state.gastosFixos.itens.filter(i=>i.id!==id);
+  save(); render();
+}
+function isFixoPagoEsteMes(id){
+  const mesAtual = todayStr().slice(0,7);
+  return state.financas.gastos.some(g=>g.origem===`fixo:${id}` && g.data.startsWith(mesAtual));
+}
+function toggleFixoPago(id){
+  const item = state.gastosFixos.itens.find(i=>i.id===id);
+  if(!item) return;
+  const mesAtual = todayStr().slice(0,7);
+  const tagOrigem = `fixo:${id}`;
+  const existente = state.financas.gastos.find(g=>g.origem===tagOrigem && g.data.startsWith(mesAtual));
+  if(existente){
+    state.financas.gastos = state.financas.gastos.filter(g=>g!==existente);
+  } else {
+    state.financas.gastos.push({ id:uid(), tag:null, categoria:'fixos', valor:item.valor, nota:item.nome, data:todayStr(), origem:tagOrigem });
+  }
+  save(); render();
+}
+function renderGastosFixosCard(){
+  const fixos = state.gastosFixos.itens;
+  const totalFixo = fixos.reduce((s,i)=>s+i.valor,0);
+  const totalPago = fixos.filter(i=>isFixoPagoEsteMes(i.id)).reduce((s,i)=>s+i.valor,0);
+  return `<div class="card">
+    <div class="section-title">📌 Gastos fixos do mês</div>
+    ${fixos.map(i=>{
+      const pago = isFixoPagoEsteMes(i.id);
+      return `<div class="fixo-item">
+        <div class="checkbox ${pago?'checked':''}" data-action="fixo-toggle-pago" data-id="${i.id}">${pago?'✓':''}</div>
+        <div class="fixo-info"><div class="item-label">${i.nome}</div></div>
+        <input type="number" class="fixo-valor-input" data-action="fixo-valor" data-id="${i.id}" value="${i.valor||''}" placeholder="R$" step="0.01" min="0">
+        <button class="btn btn-secondary fixo-del" data-action="fixo-delete" data-id="${i.id}">✕</button>
+      </div>`;
+    }).join('')}
+    <form id="form-fixo" class="fixo-form">
+      <input type="text" name="nome" placeholder="Novo gasto fixo" required>
+      <input type="number" name="valor" placeholder="R$" step="0.01" min="0">
+      <button type="submit" class="btn btn-primary">+</button>
+    </form>
+    <div class="divider"></div>
+    <div class="row-between"><span>Total fixo mensal</span><strong style="color:var(--text)">${brl(totalFixo)}</strong></div>
+    <div class="row-between"><span>Pago este mês</span><strong style="color:var(--success)">${brl(totalPago)}</strong></div>
+    <p class="hint">${totalPago<totalFixo ? `Faltam ${brl(totalFixo-totalPago)} em contas fixas pra fechar o mês.` : 'Todas as contas fixas do mês estão marcadas como pagas. ✅'}</p>
   </div>`;
 }
 
@@ -1137,8 +1224,10 @@ function renderFinanceiro(){
     <p class="hint">Pedido de iFood? Use o botão 🍕 na aba Hoje — ele já lança a multa junto.</p>
   </div>`;
 
+  html += renderGastosFixosCard();
+
   html += `<div class="card"><div class="section-title">📊 Resumo do mês</div>`;
-  const catsToShow = [...EXPENSE_CATEGORIES.map(c=>c.key), 'delivery', 'caixinha'];
+  const catsToShow = [...EXPENSE_CATEGORIES.map(c=>c.key), 'delivery', 'caixinha', 'fixos'];
   const anyExpense = catsToShow.some(k=>stats.porCategoria[k]);
   if(anyExpense){
     catsToShow.forEach(key=>{
@@ -1294,6 +1383,8 @@ document.addEventListener('click', (e)=>{
     case 'exportar-dados': exportData(); break;
     case 'apagar-dados': resetAll(); break;
     case 'delete-despesa': deleteDespesa(a.id); break;
+    case 'fixo-toggle-pago': toggleFixoPago(a.id); break;
+    case 'fixo-delete': deleteGastoFixo(a.id); break;
     case 'notif-ativar': ativarNotificacoes(); break;
     case 'instalar-app':
       if(deferredInstallPrompt){ deferredInstallPrompt.prompt(); deferredInstallPrompt=null; }
@@ -1307,6 +1398,7 @@ document.addEventListener('change', (e)=>{
   if(a.action==='ref-obs') updateRefObs(todayStr(), a.key, el.value);
   if(a.action==='config-field') updateConfig(a.field, el.value);
   if(a.action==='import-file') handleImportFile(el.files[0]);
+  if(a.action==='fixo-valor') updateGastoFixoValor(a.id, el.value);
 });
 document.addEventListener('submit', (e)=>{
   const form = e.target;
@@ -1318,6 +1410,11 @@ document.addEventListener('submit', (e)=>{
   if(form.id==='form-peso'){
     e.preventDefault();
     registrarPeso(todayStr(), Number(form.valor.value));
+    form.reset();
+  }
+  if(form.id==='form-fixo'){
+    e.preventDefault();
+    addGastoFixo(form.nome.value, form.valor.value);
     form.reset();
   }
 });
@@ -1371,6 +1468,7 @@ window.addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); deferr
 document.addEventListener('DOMContentLoaded', ()=>{
   state = load();
   if(!state.appStartDate){ state.appStartDate = todayStr(); save(); }
+  ensureGastosFixosSeed();
   evaluateOnLoad();
   render();
   checkWeeklySummaryAndShow();
