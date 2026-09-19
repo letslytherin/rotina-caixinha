@@ -183,6 +183,13 @@ textarea{resize:vertical;min-height:48px;}
 .fixo-form{display:flex;gap:8px;margin-top:10px;}
 .fixo-form input[name="nome"]{flex:1;}
 .fixo-form input[name="valor"]{width:84px;flex-shrink:0;}
+.conquistas-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.conquista{background:var(--surface-2);border:1px solid var(--border-soft);border-radius:var(--radius-md);padding:12px 6px;text-align:center;opacity:.45;}
+.conquista.desbloqueada{opacity:1;border-color:var(--accent-border);background:var(--accent-soft);}
+.conquista-icon{font-size:22px;margin-bottom:4px;}
+.conquista-nome{font-size:9.5px;font-weight:700;color:var(--text-dim);line-height:1.3;}
+.comparativo-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-soft);}
+.comparativo-row:last-child{border-bottom:none;}
 </style>
 </head>
 <body>
@@ -204,8 +211,9 @@ function defaultState(){
     financas:{ gastos:[] },
     peso:{ historico:[] },
     gastosFixos:{ itens:[], seeded:false },
-    estudos:{ topicos:[] },
+    estudos:{ topicos:[], ciclos:0, totalConcluidosHistorico:0 },
     questoesDiario:{},
+    treinoCargas:{},
     appStartDate:null,
     weeklySummaryLastShownWeek:null,
     lastEvaluatedDate:null
@@ -225,6 +233,7 @@ function load(){
       gastosFixos: Object.assign(base.gastosFixos, parsed.gastosFixos||{}),
       estudos: Object.assign(base.estudos, parsed.estudos||{}),
       questoesDiario: parsed.questoesDiario||{},
+      treinoCargas: parsed.treinoCargas||{},
       days: parsed.days||{},
       weekends: parsed.weekends||{}
     });
@@ -291,6 +300,39 @@ function currentTreinoNivel(){
   let nivel = TREINO_NIVEIS[0];
   TREINO_NIVEIS.forEach(n=>{ if(count>=n.min) nivel=n; });
   return { nivel, count };
+}
+function registrarCarga(nomeExercicio, valor){
+  if(!valor || valor<=0) return;
+  if(!state.treinoCargas[nomeExercicio]) state.treinoCargas[nomeExercicio] = [];
+  state.treinoCargas[nomeExercicio].push({ data:todayStr(), valor:Number(valor) });
+  save(); render();
+}
+function getCargaInfo(nomeExercicio){
+  const historico = state.treinoCargas[nomeExercicio];
+  if(!historico || !historico.length) return null;
+  const ultima = historico[historico.length-1];
+  const anterior = historico.length>1 ? historico[historico.length-2] : null;
+  return { ultima, delta: anterior ? ultima.valor-anterior.valor : null };
+}
+function computeCorrelacaoPesoTreino(){
+  const fimJanela = todayStr();
+  const inicioJanela = addDays(fimJanela,-28);
+  let treinoOk=0, treinoTot=0;
+  let cursor = inicioJanela;
+  while(cursor<=fimJanela){
+    if(isWeekday(cursor)){
+      treinoTot++;
+      if(state.days[cursor] && state.days[cursor].items.treino==='feito') treinoOk++;
+    } else if(dayOfWeek(cursor)===6){
+      treinoTot++;
+      if(state.weekends[cursor] && state.weekends[cursor].treino==='feito') treinoOk++;
+    }
+    cursor = addDays(cursor,1);
+  }
+  const pesosNaJanela = state.peso.historico.filter(h=>h.data>=inicioJanela && h.data<=fimJanela).sort((a,b)=>a.data.localeCompare(b.data));
+  const variacaoPeso = pesosNaJanela.length>=2 ? (pesosNaJanela[pesosNaJanela.length-1].valor - pesosNaJanela[0].valor) : null;
+  const freqPct = treinoTot>0 ? Math.round((treinoOk/treinoTot)*100) : 0;
+  return { freqPct, variacaoPeso };
 }
 
 const ICON_TREINO_ACADEMIA = `<svg viewBox="0 0 320 110" class="treino-ilustracao" role="img" aria-label="Ilustração de treino de academia">
@@ -388,9 +430,17 @@ function getCoachDirectives(){
   const directives = [];
   const check = (time, done, msg) => { if(hm>=time && !done) directives.push(msg); };
 
-  check('21:00', getQuestoesHoje(today)>=QUESTOES_META, `${NOME_USUARIA}, você precisa responder as ${QUESTOES_META} questões do dia.`);
+  check('21:00', getQuestoesHoje(today).total>=QUESTOES_META, `${NOME_USUARIA}, você precisa responder as ${QUESTOES_META} questões do dia.`);
   if(state.estudos.topicos.some(t=>!t.concluido)){
     check('20:00', estudouTopicoHoje(), `${NOME_USUARIA}, você precisa estudar pelo menos um tópico do edital hoje.`);
+  }
+  const diaDoMes = Number(today.slice(8,10));
+  if(diaDoMes>=25){
+    const totalFixo = state.gastosFixos.itens.reduce((s,i)=>s+i.valor,0);
+    const totalPago = state.gastosFixos.itens.filter(i=>isFixoPagoEsteMes(i.id)).reduce((s,i)=>s+i.valor,0);
+    if(totalFixo>totalPago){
+      check('00:00', false, `${NOME_USUARIA}, você tem ${brl(totalFixo-totalPago)} em contas fixas não pagas este mês. O mês tá acabando.`);
+    }
   }
 
   if(isWeekday(today)){
@@ -483,13 +533,27 @@ function toggleTreino(dateStr, status){
   } else { setTag(tag,0,'',dateStr); }
   save(); render();
 }
-function getQuestoesHoje(dateStr){ return state.questoesDiario[dateStr] || 0; }
-function addQuestoes(dateStr, qtd){
-  state.questoesDiario[dateStr] = Math.max(0, getQuestoesHoje(dateStr) + qtd);
+function getQuestoesHoje(dateStr){
+  const v = state.questoesDiario[dateStr];
+  if(!v) return { total:0, acertos:0 };
+  if(typeof v === 'number') return { total:v, acertos:0 };
+  return v;
+}
+function registrarRodadaQuestoes(dateStr, totalIncremento, acertosIncremento){
+  const atual = getQuestoesHoje(dateStr);
+  const total = Math.max(0, atual.total + (Number(totalIncremento)||0));
+  const acertos = Math.max(0, Math.min(total, atual.acertos + (Number(acertosIncremento)||0)));
+  state.questoesDiario[dateStr] = { total, acertos };
   save(); render();
 }
+function computeAcertoMedioMes(yyyymm){
+  const dias = Object.keys(state.questoesDiario).filter(d=>d.startsWith(yyyymm));
+  let total=0, acertos=0;
+  dias.forEach(d=>{ const v=getQuestoesHoje(d); total+=v.total; acertos+=v.acertos; });
+  return total>0 ? Math.round((acertos/total)*100) : null;
+}
 function finalizarQuestoesDoDia(dateStr){
-  const qtd = getQuestoesHoje(dateStr);
+  const qtd = getQuestoesHoje(dateStr).total;
   const tag = `${dateStr}:questoes`;
   if(qtd < QUESTOES_META){
     setTag(tag, 10, `Menos de ${QUESTOES_META} questões respondidas no dia (${qtd}/${QUESTOES_META})`, dateStr, 'caixinha', 'questoes');
@@ -498,17 +562,20 @@ function finalizarQuestoesDoDia(dateStr){
   }
 }
 function renderQuestoesCard(dateStr){
-  const qtd = getQuestoesHoje(dateStr);
-  const pct = Math.min(100, Math.round((qtd/QUESTOES_META)*100));
+  const info = getQuestoesHoje(dateStr);
+  const pct = Math.min(100, Math.round((info.total/QUESTOES_META)*100));
+  const acertoPct = info.total>0 ? Math.round((info.acertos/info.total)*100) : null;
+  const mediaMes = computeAcertoMedioMes(dateStr.slice(0,7));
   return `<div class="card">
     <div class="section-title">📝 Questões do dia — meta ${QUESTOES_META}</div>
-    <div class="row-between"><span>${qtd} questões</span><span>${pct}%</span></div>
+    <div class="row-between"><span>${info.total} respondidas${acertoPct!==null?` · ${acertoPct}% de acerto`:''}</span><span>${pct}%</span></div>
     <div class="progress"><div class="progress-fill ${pct>=100?'good':''}" style="width:${pct}%"></div></div>
-    <div class="btn-ghost-row" style="margin-top:12px;">
-      <button class="btn" data-action="questoes-add" data-date="${dateStr}" data-qtd="10">+10</button>
-      <button class="btn" data-action="questoes-add" data-date="${dateStr}" data-qtd="20">+20</button>
-      <button class="btn btn-secondary" data-action="questoes-add" data-date="${dateStr}" data-qtd="-10">-10</button>
-    </div>
+    <form id="form-questoes" class="peso-form" style="margin-top:12px;">
+      <input type="number" name="totalRodada" min="1" placeholder="Quantas fez" required>
+      <input type="number" name="acertosRodada" min="0" placeholder="Quantas acertou" required>
+      <button type="submit" class="btn btn-primary">Registrar</button>
+    </form>
+    ${mediaMes!==null ? `<p class="hint">Média de acerto no mês: ${mediaMes}%.</p>` : ''}
   </div>`;
 }
 function toggleTreinoUnified(dateStr, status){
@@ -679,6 +746,44 @@ function computeStreak(){
   return streak;
 }
 
+/* ---------- conquistas ---------- */
+const ACHIEVEMENTS = [
+  { id:'streak7', icon:'🔥', nome:'Uma semana de fogo', cond:()=>computeStreak()>=7 },
+  { id:'streak14', icon:'🔥', nome:'Duas semanas sem escorregar', cond:()=>computeStreak()>=14 },
+  { id:'streak30', icon:'🏆', nome:'Um mês inteiro em dia', cond:()=>computeStreak()>=30 },
+  { id:'ciclo1', icon:'📚', nome:'Primeira volta no edital', cond:()=>(state.estudos.ciclos||0)>=1 },
+  { id:'topicos50', icon:'📖', nome:'50 tópicos estudados', cond:()=>(state.estudos.totalConcluidosHistorico||0)>=50 },
+  { id:'topicos100', icon:'📖', nome:'100 tópicos estudados', cond:()=>(state.estudos.totalConcluidosHistorico||0)>=100 },
+  { id:'peso5', icon:'⚖️', nome:'Primeiros -5kg', cond:()=>{
+    const h = state.peso.historico; if(h.length<2) return false;
+    const s = h.slice().sort((a,b)=>a.data.localeCompare(b.data));
+    return (s[s.length-1].valor - s[0].valor) <= -5;
+  }},
+  { id:'peso10', icon:'⚖️', nome:'Primeiros -10kg', cond:()=>{
+    const h = state.peso.historico; if(h.length<2) return false;
+    const s = h.slice().sort((a,b)=>a.data.localeCompare(b.data));
+    return (s[s.length-1].valor - s[0].valor) <= -10;
+  }},
+  { id:'quitou1', icon:'🐯', nome:'Primeira caixinha quitada', cond:()=>state.caixinha.historicoQuitacoes.length>=1 },
+  { id:'nivel4', icon:'🏋️', nome:'Nível máximo do treino', cond:()=>currentTreinoNivel().nivel===TREINO_NIVEIS[TREINO_NIVEIS.length-1] }
+];
+function computeConquistas(){
+  return ACHIEVEMENTS.map(a=>({ ...a, desbloqueada: a.cond() }));
+}
+function renderConquistasCard(){
+  const conquistas = computeConquistas();
+  const desbloqueadas = conquistas.filter(c=>c.desbloqueada);
+  return `<div class="card">
+    <div class="section-title">🏆 Conquistas (${desbloqueadas.length}/${conquistas.length})</div>
+    <div class="conquistas-grid">
+      ${conquistas.map(c=>`<div class="conquista ${c.desbloqueada?'desbloqueada':''}" title="${c.nome}">
+        <div class="conquista-icon">${c.desbloqueada?c.icon:'🔒'}</div>
+        <div class="conquista-nome">${c.nome}</div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
 /* ---------- peso ---------- */
 function registrarPeso(dataStr, valor){
   if(!valor || valor<=0) return;
@@ -735,6 +840,16 @@ function renderPesoCard(){
     ` : `<p class="hint" style="margin-top:10px;">Registre seu peso pra começar a acompanhar a evolução.</p>`}
   </div>`;
 }
+function renderCorrelacaoCard(){
+  const { freqPct, variacaoPeso } = computeCorrelacaoPesoTreino();
+  if(variacaoPeso===null) return '';
+  const tendencia = variacaoPeso<0 ? 'emagrecendo' : variacaoPeso>0 ? 'ganhando peso' : 'estável';
+  return `<div class="card">
+    <div class="section-title">🔗 Treino x Peso (últimos 28 dias)</div>
+    <p class="muted">Você treinou <strong style="color:var(--text)">${freqPct}%</strong> dos dias possíveis e está <strong style="color:var(--text)">${tendencia}</strong> (${variacaoPeso>0?'+':''}${variacaoPeso.toFixed(1)}kg no período).</p>
+    <p class="hint">${freqPct<70 && variacaoPeso>=0 ? 'A frequência caiu e o peso não desceu — não é coincidência.' : freqPct>=70 && variacaoPeso<0 ? 'Constância alta, peso descendo. É disso que se trata.' : ''}</p>
+  </div>`;
+}
 
 /* ---------- estudos ---------- */
 function addTopicos(textoBruto){
@@ -749,10 +864,38 @@ function toggleTopicoConcluido(id){
   if(!t) return;
   t.concluido = !t.concluido;
   t.concluidoEm = t.concluido ? todayStr() : null;
+  if(t.concluido){ state.estudos.totalConcluidosHistorico = (state.estudos.totalConcluidosHistorico||0) + 1; }
   save(); render();
 }
 function estudouTopicoHoje(){
   return state.estudos.topicos.some(t=>t.concluidoEm===todayStr());
+}
+function reiniciarCicloEdital(){
+  if(!confirm('Isso zera o progresso e começa uma nova volta de revisão no edital inteiro. Continuar?')) return;
+  state.estudos.topicos.forEach(t=>{ t.concluido=false; t.concluidoEm=null; });
+  state.estudos.ciclos = (state.estudos.ciclos||0) + 1;
+  save(); render();
+  toastSimple(`Ciclo ${state.estudos.ciclos} começando. Revisão é o que fixa conteúdo.`);
+}
+function getDisciplinasEsquecidas(){
+  const porDisciplina = {};
+  state.estudos.topicos.forEach(t=>{
+    const d = getDisciplina(t.nome);
+    if(!porDisciplina[d]) porDisciplina[d] = { pendentes:0, ultimoEstudo:null };
+    if(!t.concluido) porDisciplina[d].pendentes++;
+    if(t.concluidoEm && (!porDisciplina[d].ultimoEstudo || t.concluidoEm>porDisciplina[d].ultimoEstudo)){
+      porDisciplina[d].ultimoEstudo = t.concluidoEm;
+    }
+  });
+  const esquecidas = [];
+  Object.entries(porDisciplina).forEach(([disciplina,info])=>{
+    if(info.pendentes===0) return;
+    const dias = info.ultimoEstudo ? diffDays(todayStr(), info.ultimoEstudo) : null;
+    if(dias===null || dias>=5){
+      esquecidas.push({ disciplina, dias });
+    }
+  });
+  return esquecidas;
 }
 function deleteTopico(id){
   if(!confirm('Remover este tópico da lista?')) return;
@@ -794,12 +937,21 @@ function getFilaIntercalada(){
 function renderEstudos(){
   const hoje = getFilaIntercalada().slice(0, TOPICOS_POR_DIA);
   const { total, concluidos, pct } = computeEstudosProgresso();
+  const ciclos = state.estudos.ciclos||0;
+  const esquecidas = getDisciplinasEsquecidas();
 
-  let html = `<div class="card"><div class="section-title">📚 Hoje você estuda isso</div>`;
+  let html = '';
+
+  if(esquecidas.length){
+    html += `<div class="banner-warn">${esquecidas.map(e=>`⚠️ Você não estuda <strong>${e.disciplina}</strong> ${e.dias===null?'ainda':`há ${e.dias} dias`}.`).join('<br>')}</div>`;
+  }
+
+  html += `<div class="card"><div class="section-title">📚 Hoje você estuda isso</div>`;
   if(total===0){
     html += `<p class="empty-state">Nenhum tópico cadastrado ainda. Cole o conteúdo do edital abaixo pra começar.</p>`;
   } else if(hoje.length===0){
-    html += `<p class="hint" style="margin-top:0;">🎉 Você zerou o edital. Todos os ${total} tópicos foram concluídos.</p>`;
+    html += `<p class="hint" style="margin-top:0;">🎉 Você zerou o edital. Todos os ${total} tópicos foram concluídos.</p>
+    <button class="btn btn-primary btn-block" style="margin-top:10px;" data-action="ciclo-reiniciar">Começar ciclo de revisão ${ciclos+1}</button>`;
   } else {
     hoje.forEach(t=>{
       html += `<div class="checklist-item">
@@ -813,10 +965,13 @@ function renderEstudos(){
 
   if(total>0){
     html += `<div class="card"><div class="section-title">📈 Progresso do edital</div>
-      <div class="row-between"><span>${concluidos} de ${total} tópicos</span><span>${pct}%</span></div>
+      <div class="row-between"><span>${concluidos} de ${total} tópicos${ciclos>0?` · 🔁 ciclo ${ciclos+1}`:''}</span><span>${pct}%</span></div>
       <div class="progress"><div class="progress-fill good" style="width:${pct}%"></div></div>
+      <p class="hint">${state.estudos.totalConcluidosHistorico||0} tópicos estudados no total, contando revisões.</p>
     </div>`;
   }
+
+  html += renderQuestoesCard(todayStr());
 
   html += `<div class="card"><div class="section-title">📋 Conteúdo do edital</div>
     <p class="hint" style="margin-top:0;">Cole o conteúdo do edital, um tópico por linha, e a fila se organiza sozinha.</p>
@@ -921,6 +1076,24 @@ function computeMonthStats(yyyymm){
   const total = list.reduce((s,g)=>s+g.valor,0);
   return { porCategoria, total };
 }
+function computeProjecaoEconomia(){
+  if(!state.config.contestDate) return null;
+  const diasDesdeInicio = Math.max(1, diffDays(todayStr(), state.appStartDate));
+  const totalAcumulado = state.financas.gastos.filter(g=>g.categoria==='caixinha').reduce((s,g)=>s+g.valor,0);
+  const mediaDiaria = totalAcumulado / diasDesdeInicio;
+  const diasAteProva = diffDays(state.config.contestDate, todayStr());
+  if(diasAteProva<0) return null;
+  const projecao = totalAcumulado + (mediaDiaria * diasAteProva);
+  return { mediaDiaria, diasAteProva, projecao, inscricoes: Math.floor(projecao/INSCRICAO_VALOR) };
+}
+function computeComparativoMensal(){
+  const hoje = todayStr();
+  const mesAtual = hoje.slice(0,7);
+  const mesPassado = addDays(mesAtual+'-01',-1).slice(0,7);
+  const atual = computeMonthStats(mesAtual);
+  const passado = computeMonthStats(mesPassado);
+  return { atual: atual.total, passado: passado.total, delta: atual.total - passado.total };
+}
 function computeDeliveryStats(yyyymm){
   const list = state.financas.gastos.filter(g=>g.data.startsWith(yyyymm));
   const pedidos = list.filter(g=>g.origem==='ifood'||g.origem==='ifood_combo').length;
@@ -961,7 +1134,7 @@ function computeWeekStats(startStr, endStr){
   let questoesOk=0, questoesTot=0;
   cursor = startStr;
   while(cursor <= endStr){
-    questoesTot++; if(getQuestoesHoje(cursor)>=QUESTOES_META) questoesOk++;
+    questoesTot++; if(getQuestoesHoje(cursor).total>=QUESTOES_META) questoesOk++;
     cursor = addDays(cursor,1);
   }
   const totalMultas = state.financas.gastos.filter(g=>g.categoria==='caixinha' && g.data>=startStr && g.data<=endStr).reduce((s,g)=>s+g.valor,0);
@@ -1096,12 +1269,21 @@ function openDaySummaryModal(dateStr){
     <div class="modal-actions"><button class="btn btn-primary" data-action="modal-close">Fechar</button></div>
   `);
 }
-function openWeeklySummaryModal(stats, titulo){
+function openWeeklySummaryModal(stats, titulo, statsAnterior){
   let tier;
   if(stats.overallPct>=90) tier = { msg:'Semana impecável. Continue exatamente assim — é isso que te tira do lugar.', cls:'pill-ok' };
   else if(stats.overallPct>=70) tier = { msg:'Semana razoável NÃO é o suficiente. Você sabe que pode mais — então exija mais de você.', cls:'pill-pending' };
   else tier = { msg:`Semana fraca. ${brl(stats.totalMultas)} na caixinha e você ainda vai fingir que está tudo bem?`, cls:'pill-bad' };
+  let comparativoHtml = '';
+  if(statsAnterior){
+    const deltaPct = Math.round(stats.overallPct - statsAnterior.overallPct);
+    const deltaMultas = stats.totalMultas - statsAnterior.totalMultas;
+    comparativoHtml = `<div class="comparativo-row"><span>Cumprimento vs semana passada</span><strong style="color:${deltaPct>=0?'var(--success)':'var(--danger)'}">${deltaPct>=0?'+':''}${deltaPct}pp</strong></div>
+    <div class="comparativo-row"><span>Multas vs semana passada</span><strong style="color:${deltaMultas<=0?'var(--success)':'var(--danger)'}">${deltaMultas>0?'+':''}${brl(deltaMultas)}</strong></div>
+    <div class="divider"></div>`;
+  }
   openModal(`📊 ${titulo||'Resumo da semana'}`, `
+    ${comparativoHtml}
     ${barRow('Treino', stats.treinoPct)}
     ${barRow('Estudo', stats.estudoPct)}
     ${barRow('Alimentação', stats.alimentacaoPct)}
@@ -1151,10 +1333,21 @@ function renderTreinoCard(status, dateStr, tipoTreino){
       <div class="row-between" style="margin-top:12px;"><span>${nivel.voltas} voltas · ${nivel.reps}</span><span>descanso ${nivel.descanso}</span></div>
       <p class="hint" style="margin-top:0;">Toque em um exercício pra ver como fazer.</p>
       <div class="divider"></div>
-      ${TREINO_EXERCICIOS.map((ex,i)=>`<details class="exercicio">
+      ${TREINO_EXERCICIOS.map((ex,i)=>{
+        const isCardio = ex.nome.startsWith('Esteira ou bike');
+        const cargaInfo = getCargaInfo(ex.nome);
+        return `<details class="exercicio">
         <summary><span class="item-label">${i+1}. ${ex.nome}</span><span class="item-time">${ex.detalhe}</span></summary>
         <p class="como-fazer">${ex.comoFazer}</p>
-      </details>`).join('')}
+        ${!isCardio ? `
+          <form class="peso-form carga-form" data-action-form="carga" data-exercicio="${ex.nome}" style="margin-bottom:12px;">
+            <input type="number" name="carga" min="0" step="0.5" placeholder="${cargaInfo?`Última: ${cargaInfo.ultima.valor}kg`:'Carga usada (kg)'}">
+            <button type="submit" class="btn btn-secondary">Salvar</button>
+          </form>
+          ${cargaInfo ? `<p class="hint" style="margin-top:-6px;">Última carga: ${cargaInfo.ultima.valor}kg${cargaInfo.delta!==null?` (${cargaInfo.delta>0?'+':''}${cargaInfo.delta}kg desde a vez anterior)`:''}</p>` : ''}
+        ` : ''}
+      </details>`;
+      }).join('')}
     `}
     <div class="divider"></div>
     <div class="item-row" style="border-bottom:none;padding-bottom:0;">
@@ -1173,6 +1366,7 @@ function renderHoje(){
   const today = todayStr();
   const wd = isWeekday(today);
   const isSat = dayOfWeek(today)===6;
+  const isSun = dayOfWeek(today)===0;
   const dataFormatada = formatBR(today);
   const heroTag = wd ? 'Rotina de performance' : (isSat ? 'Treino + organização da semana' : 'Rotina de organização da semana');
   const streak = computeStreak();
@@ -1180,13 +1374,7 @@ function renderHoje(){
     ${streak>0?`<div class="badge-streak" style="margin-top:10px;">🔥 ${streak} dia${streak>1?'s':''} sem multa</div>`:''}
     ${isModoConcurso(today)?'<div class="badge-fire" style="margin-top:10px;">🔥 Modo concurso — VOCÊ NÃO PODE pular estudo agora. Custa R$20.</div>':''}</div>`;
   html += renderCoachBanner();
-  html += renderQuestoesCard(today);
-
-  if(wd || isSat){
-    const treinoStatus = wd ? ensureWeekdayDay(today).items.treino : ensureWeekend(today).treino;
-    const tipoTreino = wd ? ensureWeekdayDay(today).items.tipoTreino : ensureWeekend(today).tipoTreino;
-    html += renderTreinoCard(treinoStatus, today, tipoTreino);
-  }
+  html += renderConquistasCard();
 
   if(wd){
     const day = ensureWeekdayDay(today);
@@ -1246,23 +1434,7 @@ function renderHoje(){
       <button class="btn btn-primary btn-block" data-action="checkin-fazer">Fazer check-in de fim de dia</button>`;
     }
     html += `</div>`;
-  } else if(isSat){
-    html += `<div class="card"><p>Hoje não tem estudo, refeição registrada nem trabalho — só o treino aí em cima.</p>
-    <p class="muted">Vá para a aba <strong>Fim de Semana</strong> pro checklist de preparo (marmita, mercado, faxina...).</p></div>`;
   } else {
-    html += `<div class="card"><p>Domingo é descanso de treino. Sem rotina de performance hoje.</p>
-    <p class="muted">Vá para a aba <strong>Fim de Semana</strong> para o checklist de preparo da próxima semana.</p></div>`;
-  }
-
-  html += `<div class="card"><button class="btn btn-danger btn-block" data-action="ifood-open" data-date="${today}">🍕 Registrar pedido de iFood</button></div>`;
-  return html;
-}
-
-function renderFds(){
-  const today = todayStr();
-  const dow = dayOfWeek(today);
-  let html = '';
-  if(dow===6 || dow===0){
     const satKey = saturdayKeyFor(today);
     const wk = ensureWeekend(satKey);
     const pendentesCriticos = WEEKEND_ITEMS.filter(i=>i.penalized && !wk.items[i.key]);
@@ -1270,7 +1442,7 @@ function renderFds(){
       html += `<div class="banner-warn">Faltam ${pendentesCriticos.length} ${pendentesCriticos.length>1?'itens':'item'}. VOCÊ TEM QUE terminar até domingo às 21h — depois disso a multa é automática.</div>`;
       if(pendentesCriticos.some(i=>i.key==='quentinhas')) html += `<div class="msg-banner">VOCÊ TEM QUE preparar as marmitas. Sem isso, segunda-feira vai ser iFood ou fome — e você vai pagar pelos dois.</div>`;
       if(pendentesCriticos.some(i=>i.key==='mercado')) html += `<div class="msg-banner">VOCÊ TEM QUE fazer o mercado agora. Sem isso, a semana já começa errada antes de começar.</div>`;
-      if(dow===0 && pendentesCriticos.some(i=>i.key==='agenda')) html += `<div class="msg-banner">VOCÊ TEM QUE organizar a agenda hoje. Domingo sem isso = segunda sem direção — custa R$10 e muito mais em energia perdida.</div>`;
+      if(isSun && pendentesCriticos.some(i=>i.key==='agenda')) html += `<div class="msg-banner">VOCÊ TEM QUE organizar a agenda hoje. Domingo sem isso = segunda sem direção — custa R$10 e muito mais em energia perdida.</div>`;
     }
     html += `<div class="card"><div class="section-title">🧹 Checklist do fim de semana</div>`;
     WEEKEND_ITEMS.forEach(i=>{
@@ -1281,32 +1453,35 @@ function renderFds(){
       </div>`;
     });
     html += `</div>`;
-    html += `<div class="card"><button class="btn btn-danger btn-block" data-action="ifood-open" data-date="${today}">🍕 Registrar pedido de iFood</button></div>`;
     if(wk.finalizado){
       const sunKey = addDays(satKey,1);
       const pens = state.financas.gastos.filter(g=> g.origem && g.origem.startsWith('weekend_') && g.data>=satKey && g.data<=sunKey);
       html += `<div class="card"><div class="section-title">Resultado do fim de semana</div>${pens.length? `<ul class="modal-list">${pens.map(g=>`<li><span>${g.nota}</span><strong>${brl(g.valor)}</strong></li>`).join('')}</ul>` : '<p class="muted">Nenhuma multa de fim de semana. ✅</p>'}</div>`;
     }
-  } else {
-    const lastSat = addDays(saturdayKeyFor(today), -7);
-    const wk = state.weekends[lastSat];
-    const nextSat = saturdayKeyFor(addDays(today,7-0));
-    const diasParaSabado = diffDays(nextSat, today);
-    html += `<div class="card"><div class="section-title">🧹 Último fim de semana</div>`;
-    if(wk){
-      WEEKEND_ITEMS.forEach(i=>{
-        html += `<div class="checklist-item"><div class="checkbox ${wk.items[i.key]?'checked':''}">${wk.items[i.key]?'✓':''}</div><div class="checklist-label">${i.label}</div></div>`;
-      });
-    } else {
-      html += `<p class="empty-state">Nenhum fim de semana registrado ainda.</p>`;
-    }
-    html += `</div><div class="card"><p class="muted">Próximo fim de semana em <strong style="color:var(--text)">${diasParaSabado}</strong> dia(s).</p></div>`;
   }
+
+  html += `<div class="card"><button class="btn btn-danger btn-block" data-action="ifood-open" data-date="${today}">🍕 Registrar pedido de iFood</button></div>`;
+  return html;
+}
+
+function renderTreino(){
+  const today = todayStr();
+  const wd = isWeekday(today);
+  const isSat = dayOfWeek(today)===6;
+  let html = '';
+  if(wd || isSat){
+    const treinoStatus = wd ? ensureWeekdayDay(today).items.treino : ensureWeekend(today).treino;
+    const tipoTreino = wd ? ensureWeekdayDay(today).items.tipoTreino : ensureWeekend(today).tipoTreino;
+    html += renderTreinoCard(treinoStatus, today, tipoTreino);
+  } else {
+    html += `<div class="card"><p>Domingo é descanso de treino oficial. Se quiser fazer algo leve por conta própria, fique à vontade — mas não é obrigatório nem penalizado.</p></div>`;
+  }
+  html += renderCorrelacaoCard();
   html += renderPesoCard();
   return html;
 }
 
-function renderCaixinha(){
+function renderFinancas(){
   const saldo = computeSaldoCaixinhaAtual();
   const monday = fmtDate(mondayOf(new Date()));
   const today = todayStr();
@@ -1323,6 +1498,13 @@ function renderCaixinha(){
       <div class="stat-box"><div class="num">🔥 ${computeStreak()}</div><div class="lbl">streak</div></div>
     </div>
   </div>`;
+
+  const projecao = computeProjecaoEconomia();
+  if(projecao){
+    html += `<div class="card"><div class="section-title">🎯 Projeção pra taxa de inscrição</div>
+      <p class="muted">No ritmo atual (${brl(projecao.mediaDiaria)}/dia), faltando ${projecao.diasAteProva} dias pra prova, você vai ter <strong style="color:var(--success)">${brl(projecao.projecao)}</strong> guardado — dá pra pagar <strong style="color:var(--text)">${projecao.inscricoes}</strong> taxa(s) de inscrição.</p>
+    </div>`;
+  }
 
   html += `<div class="card"><div class="section-title">🎯 Destino do dinheiro</div>
     <textarea data-action="config-field" data-field="caixinhaDestino">${state.config.caixinhaDestino}</textarea>
@@ -1349,20 +1531,14 @@ function renderCaixinha(){
     html += `</div>`;
   }
 
-  return html;
-}
-
-function renderFinanceiro(){
-  const today = todayStr();
-  const mesAtual = today.slice(0,7);
   const stats = computeMonthStats(mesAtual);
   const deliv = computeDeliveryStats(mesAtual);
-  const saldo = computeSaldoCaixinhaAtual();
   const meta = state.config.metaEconomiaMensal;
   const metaPct = meta>0 ? Math.min(100, Math.round((saldo/meta)*100)) : 0;
   const maxCat = Math.max(1, ...Object.values(stats.porCategoria));
+  const comparativo = computeComparativoMensal();
 
-  let html = `<div class="card">
+  html += `<div class="card">
     <div class="section-title">➕ Registrar gasto</div>
     <form id="form-despesa">
       <label>Categoria</label>
@@ -1380,7 +1556,11 @@ function renderFinanceiro(){
 
   html += renderGastosFixosCard();
 
-  html += `<div class="card"><div class="section-title">📊 Resumo do mês</div>`;
+  html += `<div class="card"><div class="section-title">📊 Resumo do mês</div>
+    <div class="comparativo-row"><span>Este mês</span><strong style="color:var(--text)">${brl(comparativo.atual)}</strong></div>
+    <div class="comparativo-row"><span>Mês passado</span><strong style="color:var(--muted)">${brl(comparativo.passado)}</strong></div>
+    <div class="comparativo-row"><span>${comparativo.delta>0?'Gastou mais':comparativo.delta<0?'Gastou menos':'Igual ao mês passado'}</span><strong style="color:${comparativo.delta>0?'var(--danger)':comparativo.delta<0?'var(--success)':'var(--text-dim)'}">${comparativo.delta>0?'+':''}${brl(comparativo.delta)}</strong></div>
+    <div class="divider"></div>`;
   const catsToShow = [...EXPENSE_CATEGORIES.map(c=>c.key), 'delivery', 'caixinha', 'fixos'];
   const anyExpense = catsToShow.some(k=>stats.porCategoria[k]);
   if(anyExpense){
@@ -1465,10 +1645,9 @@ function renderAjustes(){
 
 function renderTab(tab){
   if(tab==='hoje') return renderHoje();
-  if(tab==='fds') return renderFds();
+  if(tab==='treino') return renderTreino();
   if(tab==='estudos') return renderEstudos();
-  if(tab==='caixinha') return renderCaixinha();
-  if(tab==='financeiro') return renderFinanceiro();
+  if(tab==='financas') return renderFinancas();
   if(tab==='ajustes') return renderAjustes();
   return '';
 }
@@ -1483,15 +1662,14 @@ function renderApp(){
         <div class="topbar-icon">🐯</div>
         <div><div class="topbar-title">Caixinha de Castigo</div><div class="topbar-sub">Rotina da Lê</div></div>
       </div>
-      <div class="topbar-saldo" data-action="nav" data-tab="caixinha">💰 ${brl(saldo)}</div>
+      <div class="topbar-saldo" data-action="nav" data-tab="financas">💰 ${brl(saldo)}</div>
     </div>
     <div class="tab-content" id="tab-content">${renderTab(activeTab)}</div>
     <nav class="bottomnav">
-      ${navButton('hoje','📅','Hoje')}
-      ${navButton('fds','🧹','Fim de Semana')}
+      ${navButton('hoje','📅','Diário')}
+      ${navButton('treino','🏋️','Treino')}
       ${navButton('estudos','📚','Estudos')}
-      ${navButton('caixinha','🐯','Caixinha')}
-      ${navButton('financeiro','💰','Financeiro')}
+      ${navButton('financas','💰','Finanças')}
       ${navButton('ajustes','⚙️','Ajustes')}
     </nav>
   `;
@@ -1518,7 +1696,7 @@ document.addEventListener('click', (e)=>{
     case 'treino-tipo': setTreinoTipo(a.date, a.tipo); break;
     case 'ref-status': toggleRefeicao(todayStr(), a.key, a.status); break;
     case 'agua-add': addAgua(todayStr(), Number(a.ml)); break;
-    case 'questoes-add': addQuestoes(a.date, Number(a.qtd)); break;
+    case 'ciclo-reiniciar': reiniciarCicloEdital(); break;
     case 'trabalho-registrar': registrarTrabalho(todayStr()); break;
     case 'checkin-fazer': doCheckinFimDia(todayStr()); break;
     case 'ver-resumo-dia': openDaySummaryModal(a.date); break;
@@ -1534,7 +1712,8 @@ document.addEventListener('click', (e)=>{
     case 'modal-close': closeModal(); break;
     case 'ver-resumo-semana': {
       const monday = fmtDate(mondayOf(new Date()));
-      openWeeklySummaryModal(computeWeekStats(monday, todayStr()), 'Resumo da semana atual');
+      const statsAnterior = computeWeekStats(addDays(monday,-7), addDays(monday,-1));
+      openWeeklySummaryModal(computeWeekStats(monday, todayStr()), 'Resumo da semana atual', statsAnterior);
       break;
     }
     case 'exportar-dados': exportData(); break;
@@ -1581,6 +1760,16 @@ document.addEventListener('submit', (e)=>{
     addTopicos(form.conteudo.value);
     form.reset();
   }
+  if(form.id==='form-questoes'){
+    e.preventDefault();
+    registrarRodadaQuestoes(todayStr(), Number(form.totalRodada.value), Number(form.acertosRodada.value));
+    form.reset();
+  }
+  if(form.dataset.actionForm==='carga'){
+    e.preventDefault();
+    registrarCarga(form.dataset.exercicio, form.carga.value);
+    form.reset();
+  }
 });
 
 /* ---------- lembretes (melhor esforço, app aberto) ---------- */
@@ -1619,9 +1808,10 @@ function checkWeeklySummaryAndShow(){
       const prevMonday = addDays(thisMonday,-7);
       const prevSunday = addDays(thisMonday,-1);
       const stats = computeWeekStats(prevMonday, prevSunday);
+      const statsAnterior = computeWeekStats(addDays(prevMonday,-7), addDays(prevMonday,-1));
       state.weeklySummaryLastShownWeek = thisMonday;
       save();
-      openWeeklySummaryModal(stats, 'Resumo da semana passada');
+      openWeeklySummaryModal(stats, 'Resumo da semana passada', statsAnterior);
     }
   }
 }
