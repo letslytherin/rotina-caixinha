@@ -63,6 +63,11 @@ body{
 .hero-tag{margin-top:4px;font-size:12.5px;color:var(--muted);font-weight:600;position:relative;}
 .msg-banner{margin:0 16px 14px;padding:13px 15px;border-radius:var(--radius-md);background:var(--surface-2);border:1px solid var(--border-soft);border-left:3px solid var(--accent);font-size:13.5px;color:#EAD9AE;line-height:1.5;display:flex;gap:10px;align-items:flex-start;}
 .msg-banner::before{content:"🐯";font-size:15px;flex-shrink:0;line-height:1.4;}
+.coach-banner{margin:0 16px 14px;padding:14px 16px;border-radius:var(--radius-md);background:linear-gradient(135deg,rgba(231,76,60,.16),var(--surface-2));border:1px solid var(--danger-border);}
+.coach-banner-title{font-size:11px;font-weight:800;letter-spacing:.6px;color:var(--danger);text-transform:uppercase;margin-bottom:8px;}
+.coach-item{font-size:13.5px;font-weight:700;color:#fff;line-height:1.5;padding:7px 0 7px 16px;border-bottom:1px solid rgba(255,255,255,.08);position:relative;}
+.coach-item:last-child{border-bottom:none;}
+.coach-item::before{content:"▸";color:var(--danger);position:absolute;left:0;top:7px;}
 .section-title{font-size:12.5px;font-weight:800;margin-bottom:14px;letter-spacing:.4px;color:var(--text);text-transform:uppercase;opacity:.9;}
 .item-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border-soft);}
 .item-row:last-child{border-bottom:none;}
@@ -342,6 +347,53 @@ function saldoSemana(){
 function pickGeneric(){
   const msg = GENERIC_MESSAGES[Math.floor(Math.random()*GENERIC_MESSAGES.length)];
   return msg.split('R$XX').join(brl(saldoSemana()));
+}
+
+const NOME_USUARIA = 'Letícia';
+function getCoachDirectives(){
+  const today = todayStr();
+  const hm = nowHM();
+  const directives = [];
+  const check = (time, done, msg) => { if(hm>=time && !done) directives.push(msg); };
+
+  if(isWeekday(today)){
+    const day = ensureWeekdayDay(today);
+    const aguaPct = Math.min(100, Math.round((day.agua.ml/AGUA_META)*100));
+    check('05:30', day.items.treino==='feito', `${NOME_USUARIA}, você precisa treinar agora.`);
+    check('08:00', day.refeicoes.ref1.status==='feito', `${NOME_USUARIA}, você precisa registrar o café da manhã.`);
+    check('09:30', !!day.items.trabalhoInicio, `${NOME_USUARIA}, você precisa começar o trabalho.`);
+    check('12:00', day.refeicoes.ref2.status==='feito', `${NOME_USUARIA}, você precisa registrar o almoço.`);
+    check('18:00', day.refeicoes.ref3.status==='feito', `${NOME_USUARIA}, você precisa registrar o jantar.`);
+    check('18:00', aguaPct>=70, `${NOME_USUARIA}, você precisa beber mais água — ainda não bateu 70% da meta.`);
+    check('18:30', day.items.estudo1==='feito', `${NOME_USUARIA}, você precisa fazer o bloco de estudo 1.`);
+    check('19:30', day.items.estudo2==='feito', `${NOME_USUARIA}, você precisa fazer o bloco de estudo 2.`);
+    check('20:30', day.items.estudo3==='feito', `${NOME_USUARIA}, você precisa fazer o bloco de estudo 3.`);
+    check('22:00', day.items.checkinFimDiaFeito, `${NOME_USUARIA}, você precisa fazer o check-in de fim de dia.`);
+  } else if(dayOfWeek(today)===6){
+    const wk = ensureWeekend(today);
+    check('12:00', wk.treino==='feito', `${NOME_USUARIA}, você precisa treinar hoje.`);
+    check('14:00', wk.items.quentinhas, `${NOME_USUARIA}, você precisa preparar as quentinhas da semana.`);
+    check('14:00', wk.items.mercado, `${NOME_USUARIA}, você precisa fazer o mercado.`);
+    check('16:00', wk.items.faxina, `${NOME_USUARIA}, você precisa fazer a faxina.`);
+  } else {
+    const satKey = saturdayKeyFor(today);
+    const wk = ensureWeekend(satKey);
+    check('12:00', wk.items.quentinhas, `${NOME_USUARIA}, você precisa preparar as quentinhas da semana.`);
+    check('12:00', wk.items.mercado, `${NOME_USUARIA}, você precisa fazer o mercado.`);
+    check('14:00', wk.items.faxina, `${NOME_USUARIA}, você precisa fazer a faxina.`);
+    check('19:00', wk.items.agenda, `${NOME_USUARIA}, você precisa organizar a agenda da semana.`);
+  }
+  return directives;
+}
+function renderCoachBanner(){
+  const directives = getCoachDirectives();
+  if(directives.length===0){
+    return `<div class="msg-banner">${pickGeneric()}</div>`;
+  }
+  return `<div class="coach-banner">
+    <div class="coach-banner-title">🐯 Ordem do dia</div>
+    ${directives.map(d=>`<div class="coach-item">${d}</div>`).join('')}
+  </div>`;
 }
 
 function isModoConcurso(dateStr){
@@ -806,7 +858,7 @@ function renderHoje(){
   const dataFormatada = formatBR(today);
   const heroTag = wd ? 'Rotina de performance' : (isSat ? 'Treino + organização da semana' : 'Rotina de organização da semana');
   let html = `<div class="card hero"><div class="hero-date">${dataFormatada}</div><div class="hero-tag">${heroTag}</div>${isModoConcurso(today)?'<div class="badge-fire" style="margin-top:10px;">🔥 Modo concurso — VOCÊ NÃO PODE pular estudo agora. Custa R$20.</div>':''}</div>`;
-  html += `<div class="msg-banner">${pickGeneric()}</div>`;
+  html += renderCoachBanner();
 
   if(wd || isSat){
     const treinoStatus = wd ? ensureWeekdayDay(today).items.treino : ensureWeekend(today).treino;
