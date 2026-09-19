@@ -224,6 +224,39 @@ const REF_TIMES = { ref1:'08:00', ref2:'12:00', ref3:'18:00' };
 const AGUA_META = 2800;
 const INSCRICAO_VALOR = 85;
 
+const TREINO_EXERCICIOS = [
+  { nome:'Esteira ou bike — aquecimento', detalhe:'5–8 min, ritmo leve a moderado' },
+  { nome:'Leg press 45°', detalhe:'pernas' },
+  { nome:'Cadeira extensora', detalhe:'quadríceps' },
+  { nome:'Cadeira flexora', detalhe:'posterior de coxa' },
+  { nome:'Cadeira abdutora', detalhe:'glúteo e quadril' },
+  { nome:'Puxada frente (pulley)', detalhe:'costas' },
+  { nome:'Remada sentada (máquina)', detalhe:'costas' },
+  { nome:'Supino ou peck deck (máquina)', detalhe:'peito' },
+  { nome:'Desenvolvimento (máquina)', detalhe:'ombro' },
+  { nome:'Panturrilha (máquina)', detalhe:'panturrilha' },
+  { nome:'Abdominal (máquina ou prancha)', detalhe:'core' },
+  { nome:'Esteira ou bike — finalização', detalhe:'10–15 min intervalado, queima' }
+];
+const TREINO_NIVEIS = [
+  { min:0, nome:'Nível 1 — Adaptação', voltas:2, reps:'15 reps', descanso:'30–40s entre exercícios' },
+  { min:15, nome:'Nível 2 — Consistência', voltas:3, reps:'15 reps', descanso:'30s entre exercícios' },
+  { min:30, nome:'Nível 3 — Intensificação', voltas:3, reps:'18–20 reps', descanso:'20s entre exercícios' },
+  { min:50, nome:'Nível 4 — Metabólico', voltas:4, reps:'20 reps', descanso:'15–20s entre exercícios' }
+];
+function computeTreinoContagem(){
+  let count = 0;
+  Object.values(state.days).forEach(d=>{ if(d.items && d.items.treino==='feito') count++; });
+  Object.values(state.weekends).forEach(w=>{ if(w.treino==='feito') count++; });
+  return count;
+}
+function currentTreinoNivel(){
+  const count = computeTreinoContagem();
+  let nivel = TREINO_NIVEIS[0];
+  TREINO_NIVEIS.forEach(n=>{ if(count>=n.min) nivel=n; });
+  return { nivel, count };
+}
+
 const WEEKEND_ITEMS = [
   { key:'faxina', label:'Faxina da casa', penalized:true },
   { key:'quentinhas', label:'Fazer quentinhas da semana', penalized:true },
@@ -294,6 +327,7 @@ function ensureWeekend(satKey){
     state.weekends[satKey] = {
       key:satKey,
       items:{ faxina:false, roupas:false, quentinhas:false, mercado:false, agenda:false, treinoPrep:false, financeiro:false, peso:false },
+      treino:'pendente',
       finalizado:false
     };
   }
@@ -316,6 +350,18 @@ function toggleTreino(dateStr, status){
     setTag(tag,10,'Treino não feito',dateStr,'caixinha','treino');
     toast(10,'VOCÊ NÃO PODE pular treino. Isso não é sobre disposição, é sobre compromisso com o esporte.');
   } else { setTag(tag,0,'',dateStr); }
+  save(); render();
+}
+function toggleTreinoUnified(dateStr, status){
+  if(isWeekday(dateStr)){ toggleTreino(dateStr, status); return; }
+  const satKey = saturdayKeyFor(dateStr);
+  const wk = ensureWeekend(satKey);
+  wk.treino = status;
+  const tag = `${satKey}:treino`;
+  if(status==='nao_feito'){
+    setTag(tag,10,'Treino de sábado não feito',satKey,'caixinha','weekend_treino');
+    toast(10,'VOCÊ NÃO PODE pular treino no sábado. Emagrecimento não anda com desculpa de fim de semana.');
+  } else { setTag(tag,0,'',satKey); }
   save(); render();
 }
 function toggleEstudo(dateStr, key, status){
@@ -430,6 +476,10 @@ function finalizeWeekend(satKey){
   if(!it.mercado) setTag(`${satKey}:w_mercado`,10,'Não fez as compras do mercado',satKey,'caixinha','weekend_mercado');
   if(!it.agenda) setTag(`${satKey}:w_agenda`,10,'Não organizou a agenda da semana',satKey,'caixinha','weekend_agenda');
   if(!it.faxina) setTag(`${satKey}:w_faxina`,10,'Não fez a faxina do fim de semana',satKey,'caixinha','weekend_faxina');
+  if(wk.treino==='pendente'){
+    wk.treino = 'nao_feito';
+    setTag(`${satKey}:treino`,10,'Treino de sábado não feito (dia encerrado sem registro)',satKey,'caixinha','weekend_treino');
+  }
   wk.finalizado = true;
 }
 function evaluateOnLoad(){
@@ -480,6 +530,13 @@ function computeWeekStats(startStr, endStr){
       STUDY_KEYS.forEach(k=>{ estudoTot++; if(d.items[k]==='feito') estudoOk++; });
       REF_KEYS.forEach(k=>{ refTot++; if(d.refeicoes[k].status==='feito') refOk++; });
       trabTot++; if(d.items.trabalhoInicio && d.items.trabalhoInicio<='09:30') trabOk++;
+    }
+    cursor = addDays(cursor,1);
+  }
+  cursor = startStr;
+  while(cursor <= endStr){
+    if(dayOfWeek(cursor)===6 && state.weekends[cursor]){
+      treinoTot++; if(state.weekends[cursor].treino==='feito') treinoOk++;
     }
     cursor = addDays(cursor,1);
   }
@@ -657,18 +714,47 @@ function itemRow(label,time,status,actionName,extraData,doneLabel,doneStatus,fai
   </div>`;
 }
 
+function renderTreinoCard(status, dateStr){
+  const { nivel, count } = currentTreinoNivel();
+  const proximo = TREINO_NIVEIS.find(n=>n.min>count);
+  return `<div class="card">
+    <div class="section-title">🏋️ Treino do dia</div>
+    <div class="badge-fire">${nivel.nome} · treino nº ${count+1}</div>
+    <p class="muted" style="margin-top:8px;">Foco: emagrecimento e definição · circuito de máquinas guiadas</p>
+    <div class="row-between" style="margin-top:12px;"><span>${nivel.voltas} voltas · ${nivel.reps}</span><span>descanso ${nivel.descanso}</span></div>
+    <div class="divider"></div>
+    ${TREINO_EXERCICIOS.map((ex,i)=>`<div class="item-row"><div class="item-info"><div class="item-label">${i+1}. ${ex.nome}</div><div class="item-time">${ex.detalhe}</div></div></div>`).join('')}
+    <div class="divider"></div>
+    <div class="item-row" style="border-bottom:none;padding-bottom:0;">
+      <div class="item-info"><div class="item-label">Treino de hoje</div>${statusPill(status)}</div>
+      <div class="segmented">
+        <button class="seg-btn ${status==='feito'?'on-ok':''}" data-action="treino-status" data-date="${dateStr}" data-status="feito">Feito</button>
+        <button class="seg-btn ${status==='nao_feito'?'on-bad':''}" data-action="treino-status" data-date="${dateStr}" data-status="nao_feito">Não feito</button>
+      </div>
+    </div>
+    <p class="hint">${proximo ? `Faltam ${proximo.min-count} treino(s) pra subir pro ${proximo.nome}.` : 'Nível máximo do circuito — a partir daqui, ajuste carga e intensidade por conta própria conforme evolui.'}</p>
+    <p class="hint">Ajuste carga aos poucos e converse com um profissional da academia se sentir dor ou dificuldade.</p>
+  </div>`;
+}
+
 function renderHoje(){
   const today = todayStr();
   const wd = isWeekday(today);
+  const isSat = dayOfWeek(today)===6;
   const dataFormatada = formatBR(today);
-  let html = `<div class="card hero"><div class="hero-date">${dataFormatada}</div><div class="hero-tag">${wd?'Rotina de performance':'Rotina de organização da semana'}</div>${isModoConcurso(today)?'<div class="badge-fire" style="margin-top:10px;">🔥 Modo concurso — VOCÊ NÃO PODE pular estudo agora. Custa R$20.</div>':''}</div>`;
+  const heroTag = wd ? 'Rotina de performance' : (isSat ? 'Treino + organização da semana' : 'Rotina de organização da semana');
+  let html = `<div class="card hero"><div class="hero-date">${dataFormatada}</div><div class="hero-tag">${heroTag}</div>${isModoConcurso(today)?'<div class="badge-fire" style="margin-top:10px;">🔥 Modo concurso — VOCÊ NÃO PODE pular estudo agora. Custa R$20.</div>':''}</div>`;
   html += `<div class="msg-banner">${pickGeneric()}</div>`;
+
+  if(wd || isSat){
+    const treinoStatus = wd ? ensureWeekdayDay(today).items.treino : ensureWeekend(today).treino;
+    html += renderTreinoCard(treinoStatus, today);
+  }
 
   if(wd){
     const day = ensureWeekdayDay(today);
 
-    html += `<div class="card"><div class="section-title">🥊 Blocos do dia</div>`;
-    html += itemRow('Treino (academia, 90min)','05:30',day.items.treino,'day-status',{key:'treino'},'Feito','feito','Não feito','nao_feito');
+    html += `<div class="card"><div class="section-title">📚 Blocos de estudo</div>`;
     STUDY_KEYS.forEach(k=>{
       html += itemRow(STUDY_LABELS[k],STUDY_TIMES[k],day.items[k],'day-status',{key:k},'Feito','feito','Pulei','nao_feito');
     });
@@ -723,8 +809,11 @@ function renderHoje(){
       <button class="btn btn-primary btn-block" data-action="checkin-fazer">Fazer check-in de fim de dia</button>`;
     }
     html += `</div>`;
+  } else if(isSat){
+    html += `<div class="card"><p>Hoje não tem estudo, refeição registrada nem trabalho — só o treino aí em cima.</p>
+    <p class="muted">Vá para a aba <strong>Fim de Semana</strong> pro checklist de preparo (marmita, mercado, faxina...).</p></div>`;
   } else {
-    html += `<div class="card"><p>Hoje é fim de semana — sem rotina de performance. As multas de segunda a sexta não valem hoje.</p>
+    html += `<div class="card"><p>Domingo é descanso de treino. Sem rotina de performance hoje.</p>
     <p class="muted">Vá para a aba <strong>Fim de Semana</strong> para o checklist de preparo da próxima semana.</p></div>`;
   }
 
@@ -981,10 +1070,8 @@ document.addEventListener('click', (e)=>{
   const a = el.dataset;
   switch(a.action){
     case 'nav': activeTab = a.tab; render(); break;
-    case 'day-status':
-      if(a.key==='treino') toggleTreino(todayStr(), a.status);
-      else toggleEstudo(todayStr(), a.key, a.status);
-      break;
+    case 'day-status': toggleEstudo(todayStr(), a.key, a.status); break;
+    case 'treino-status': toggleTreinoUnified(a.date, a.status); break;
     case 'ref-status': toggleRefeicao(todayStr(), a.key, a.status); break;
     case 'agua-add': addAgua(todayStr(), Number(a.ml)); break;
     case 'trabalho-registrar': registrarTrabalho(todayStr()); break;
