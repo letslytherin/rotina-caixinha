@@ -389,6 +389,9 @@ function getCoachDirectives(){
   const check = (time, done, msg) => { if(hm>=time && !done) directives.push(msg); };
 
   check('21:00', getQuestoesHoje(today)>=QUESTOES_META, `${NOME_USUARIA}, você precisa responder as ${QUESTOES_META} questões do dia.`);
+  if(state.estudos.topicos.some(t=>!t.concluido)){
+    check('20:00', estudouTopicoHoje(), `${NOME_USUARIA}, você precisa estudar pelo menos um tópico do edital hoje.`);
+  }
 
   if(isWeekday(today)){
     const day = ensureWeekdayDay(today);
@@ -745,7 +748,11 @@ function toggleTopicoConcluido(id){
   const t = state.estudos.topicos.find(x=>x.id===id);
   if(!t) return;
   t.concluido = !t.concluido;
+  t.concluidoEm = t.concluido ? todayStr() : null;
   save(); render();
+}
+function estudouTopicoHoje(){
+  return state.estudos.topicos.some(t=>t.concluidoEm===todayStr());
 }
 function deleteTopico(id){
   if(!confirm('Remover este tópico da lista?')) return;
