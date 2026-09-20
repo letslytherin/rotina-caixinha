@@ -84,7 +84,7 @@ body{
 .exercicio summary .item-time{text-align:right;}
 .como-fazer{margin:0 0 12px;font-size:12.5px;color:var(--text-dim);line-height:1.55;background:var(--surface-2);border-radius:var(--radius-sm);padding:10px 12px;}
 .treino-modo{display:flex;gap:8px;margin-bottom:14px;}
-.modo-btn{flex:1;border:1px solid var(--border-soft);background:var(--surface-2);color:var(--muted);font-size:12.5px;font-weight:700;padding:10px 8px;border-radius:11px;cursor:pointer;transition:all .15s;}
+.modo-btn{flex:1;border:1px solid var(--border-soft);background:var(--surface-2);color:var(--muted);font-size:11.5px;font-weight:700;padding:10px 4px;border-radius:11px;cursor:pointer;transition:all .15s;white-space:nowrap;}
 .modo-btn.ativo{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-border);}
 .treino-ilustracao{display:block;width:100%;height:auto;border-radius:16px;}
 .pill{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:800;padding:4px 9px;border-radius:20px;width:fit-content;letter-spacing:.2px;border:1px solid transparent;}
@@ -367,6 +367,23 @@ const ICON_TREINO_BIKE = `<svg viewBox="0 0 320 110" class="treino-ilustracao" r
     <path d="M205 28 L223 32" stroke="#FFEE99" stroke-width="6"/>
     <path d="M20 52 H50 M14 64 H44 M22 40 H46" stroke="#FFE066" stroke-opacity=".45" stroke-width="5"/>
   </g>
+</svg>`;
+const ICON_TREINO_CORRIDA = `<svg viewBox="0 0 320 110" class="treino-ilustracao" role="img" aria-label="Ilustração de corrida">
+  <defs><radialGradient id="glowC" cx="50%" cy="35%" r="75%">
+    <stop offset="0%" stop-color="#8CE99A" stop-opacity=".35"/>
+    <stop offset="100%" stop-color="#8CE99A" stop-opacity="0"/>
+  </radialGradient></defs>
+  <rect x="0" y="0" width="320" height="110" rx="16" fill="var(--surface-2)"/>
+  <rect x="0" y="0" width="320" height="110" rx="16" fill="url(#glowC)"/>
+  <g stroke="#8CE99A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none" transform="translate(20 0)">
+    <circle cx="150" cy="28" r="10" fill="#8CE99A" stroke="none"/>
+    <path d="M150 38 L136 66"/>
+    <path d="M136 66 L114 70 L96 96"/>
+    <path d="M136 66 L160 84 L180 66"/>
+    <path d="M143 48 L118 44"/>
+    <path d="M143 48 L168 58"/>
+  </g>
+  <path d="M40 55 H75 M30 68 H65 M45 42 H70" stroke="#8CE99A" stroke-opacity=".4" stroke-width="5" stroke-linecap="round"/>
 </svg>`;
 
 const WEEKEND_ITEMS = [
@@ -1317,17 +1334,24 @@ function renderTreinoCard(status, dateStr, tipoTreino){
   const { nivel, count } = currentTreinoNivel();
   const proximo = TREINO_NIVEIS.find(n=>n.min>count);
   const isBike = tipoTreino==='bike';
+  const isCorrida = tipoTreino==='corrida';
+  const isAcademia = !isBike && !isCorrida;
+  const icone = isBike ? ICON_TREINO_BIKE : isCorrida ? ICON_TREINO_CORRIDA : ICON_TREINO_ACADEMIA;
   return `<div class="card">
     <div class="section-title">🏋️ Treino do dia</div>
     <div class="treino-modo">
-      <button class="modo-btn ${!isBike?'ativo':''}" data-action="treino-tipo" data-date="${dateStr}" data-tipo="academia">🏋️ Academia</button>
-      <button class="modo-btn ${isBike?'ativo':''}" data-action="treino-tipo" data-date="${dateStr}" data-tipo="bike">🚴 Bike 25km</button>
+      <button class="modo-btn ${isAcademia?'ativo':''}" data-action="treino-tipo" data-date="${dateStr}" data-tipo="academia">🏋️ Academia</button>
+      <button class="modo-btn ${isBike?'ativo':''}" data-action="treino-tipo" data-date="${dateStr}" data-tipo="bike">🚴 Bike</button>
+      <button class="modo-btn ${isCorrida?'ativo':''}" data-action="treino-tipo" data-date="${dateStr}" data-tipo="corrida">🏃 Corrida</button>
     </div>
-    ${isBike ? ICON_TREINO_BIKE : ICON_TREINO_ACADEMIA}
+    ${icone}
     <div class="badge-fire" style="margin-top:12px;">${nivel.nome} · treino nº ${count+1}</div>
     ${isBike ? `
       <p class="muted" style="margin-top:8px;">Sem academia hoje? 25km de bike (rua ou ergométrica) valem como treino completo do dia.</p>
       <p class="hint">Ritmo que suba a respiração mas dê pra sustentar os 25km inteiros — não precisa virar corrida.</p>
+    ` : isCorrida ? `
+      <p class="muted" style="margin-top:8px;">Sem academia hoje? 5km de corrida (rua ou esteira) + 10–15min de HIIT valem como treino completo do dia.</p>
+      <p class="hint">Corra num ritmo que consiga sustentar os 5km inteiros, depois alterne 30s forte com 30s de descanso no HIIT.</p>
     ` : `
       <p class="muted" style="margin-top:8px;">Foco: emagrecimento e definição · circuito de máquinas guiadas</p>
       <div class="row-between" style="margin-top:12px;"><span>${nivel.voltas} voltas · ${nivel.reps}</span><span>descanso ${nivel.descanso}</span></div>
@@ -1358,7 +1382,7 @@ function renderTreinoCard(status, dateStr, tipoTreino){
       </div>
     </div>
     <p class="hint">${proximo ? `Faltam ${proximo.min-count} treino(s) pra subir pro ${proximo.nome}.` : 'Nível máximo do circuito — a partir daqui, ajuste carga e intensidade por conta própria conforme evolui.'}</p>
-    ${!isBike ? '<p class="hint">Ajuste carga aos poucos e converse com um profissional da academia se sentir dor ou dificuldade.</p>' : ''}
+    ${isAcademia ? '<p class="hint">Ajuste carga aos poucos e converse com um profissional da academia se sentir dor ou dificuldade.</p>' : ''}
   </div>`;
 }
 
